@@ -17,16 +17,31 @@ export const MANIFEST_KEY = 'index/manifest.json';
    実キーはコードに書かず、Vercel の Environment Variables から取得する
 ---------------------------------------- */
 function getConfig() {
-  const accountId = process.env.R2_ACCOUNT_ID;
-  const accessKeyId = process.env.R2_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
-  const bucket = process.env.R2_BUCKET;
+  /* コピペ時に混入しがちな前後の空白・改行を取り除く */
+  const accountId = (process.env.R2_ACCOUNT_ID || '').trim();
+  const accessKeyId = (process.env.R2_ACCESS_KEY_ID || '').trim();
+  const secretAccessKey = (process.env.R2_SECRET_ACCESS_KEY || '').trim();
+  const bucket = (process.env.R2_BUCKET || '').trim();
 
   if (!accountId || !accessKeyId || !secretAccessKey || !bucket) {
+    const missing = [
+      !accountId && 'R2_ACCOUNT_ID',
+      !accessKeyId && 'R2_ACCESS_KEY_ID',
+      !secretAccessKey && 'R2_SECRET_ACCESS_KEY',
+      !bucket && 'R2_BUCKET',
+    ].filter(Boolean).join(' / ');
+    throw new Error(`R2 の環境変数が設定されていません: ${missing}`);
+  }
+
+  /* アカウントIDはホスト名の一部になるため、形式が違うと接続自体ができない。
+     管理画面では末尾が「…」で省略表示されるため、途中までしか登録されていない事故が起きやすい */
+  if (accountId.length !== 32 || !/^[a-z0-9]+$/i.test(accountId)) {
     throw new Error(
-      'R2 の環境変数が設定されていません（R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_BUCKET）'
+      `R2_ACCOUNT_ID の形式が正しくありません（32桁の英数字が必要ですが、現在 ${accountId.length} 文字です）。` +
+      'Cloudflare の R2 → Overview → Account Details にあるコピーボタンで、省略されていない全体をコピーしてください。'
     );
   }
+
   return { accountId, accessKeyId, secretAccessKey, bucket };
 }
 
@@ -176,11 +191,19 @@ export async function r2Fetch(method, key, { body = null, contentType } = {}) {
   };
   if (contentType) sendHeaders['content-type'] = contentType;
 
-  return fetch(`https://${host}${canonicalUri}`, {
-    method,
-    headers: sendHeaders,
-    body: body ?? undefined,
-  });
+  try {
+    return await fetch(`https://${host}${canonicalUri}`, {
+      method,
+      headers: sendHeaders,
+      body: body ?? undefined,
+    });
+  } catch (err) {
+    /* ここに来るのは接続自体が成立しなかった場合（多くは接続先ホスト名の誤り）。
+       認証情報の誤りなら R2 から 401/403 が返るので、この分岐には入らない */
+    throw new Error(
+      `R2 への接続に失敗しました（接続先: ${host}）。R2_ACCOUNT_ID が正しいか確認してください。詳細: ${err.message}`
+    );
+  }
 }
 
 /* ----------------------------------------
