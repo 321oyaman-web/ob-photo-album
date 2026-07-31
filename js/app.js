@@ -469,9 +469,8 @@
     el.uploadStartBtn.disabled = false;
   }
 
-  /* 画像をブラウザ上で縮小して JPEG 化する。通信量と保存容量の両方を節約できる */
-  async function resizeImage(file, maxEdge, quality) {
-    const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  /* 読み込み済みの画像から、指定サイズの JPEG を1つ作る */
+  async function drawToJpeg(bitmap, maxEdge, quality) {
     const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
     const width = Math.round(bitmap.width * scale);
     const height = Math.round(bitmap.height * scale);
@@ -481,11 +480,35 @@
     canvas.height = height;
     const ctx = canvas.getContext('2d');
     ctx.drawImage(bitmap, 0, 0, width, height);
-    bitmap.close();
 
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+
+    /* 生成後すぐ canvas を最小化して、大きな写真を連続処理してもメモリが積み上がらないようにする */
+    canvas.width = 0;
+    canvas.height = 0;
+
     if (!blob) throw new Error('画像の変換に失敗しました');
     return { blob, width, height };
+  }
+
+  /* 1枚の写真から「原寸用」と「サムネイル用」を作る。
+     画像の展開（デコード）は1回だけ行う。2回に分けると、高画素の写真では
+     展開後のデータが二重にメモリへ載り、スマホでは失敗しやすくなるため */
+  async function makeVariants(file) {
+    let bitmap;
+    try {
+      bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    } catch {
+      throw new Error('この形式の画像は読み込めません（HEIC など）');
+    }
+
+    try {
+      const full = await drawToJpeg(bitmap, FULL_MAX_EDGE, FULL_QUALITY);
+      const thumb = await drawToJpeg(bitmap, THUMB_MAX_EDGE, THUMB_QUALITY);
+      return { full, thumb };
+    } finally {
+      bitmap.close();
+    }
   }
 
   /* 署名付き URL へ直接 PUT する */
@@ -520,10 +543,7 @@
       el.progressText.textContent = `${done + 1} / ${files.length} 枚目を処理中… （${file.name}）`;
 
       try {
-        const [full, thumb] = await Promise.all([
-          resizeImage(file, FULL_MAX_EDGE, FULL_QUALITY),
-          resizeImage(file, THUMB_MAX_EDGE, THUMB_QUALITY),
-        ]);
+        const { full, thumb } = await makeVariants(file);
 
         const slot = await api('/api/upload-url', {
           method: 'POST',
