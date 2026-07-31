@@ -188,6 +188,16 @@ ob-photo-album/
 - R2（`region=auto`・パススタイル）で正しい形式になること
 - ダウンロード時の `Content-Disposition` が正しく署名されること
 
+`api/` のハンドラーも、R2 をメモリ上に模した状態で**全44件の統合テストが通っています**
+（`_drafts/api-test.html`）。ログイン・トークン改ざん検知・権限チェック・登録・削除・
+日本語ファイル名のダウンロードまで、実ファイルをそのまま読み込んで検証しています。
+
+api/ を修正したあとにテストし直す場合は、先に読み込み用データを作り直してください。
+
+```bash
+powershell -Command "$d='ob-photo-album'; $m=[ordered]@{}; @('_r2.js','_auth.js','login.js','photos.js','upload-url.js','register.js','delete.js') | %{ $m[$_] = Get-Content \"$d\api\$_\" -Raw -Encoding UTF8 }; Set-Content \"$d\_drafts\api-sources.js\" -Value ('window.API_SOURCES = ' + ($m | ConvertTo-Json -Depth 3 -Compress) + ';') -Encoding UTF8 -NoNewline"
+```
+
 画面側も、API をモックした状態で以下を確認済みです。
 
 - ログイン → 一覧表示 → 年・イベントの絞り込み → 拡大表示 → キーボード操作
