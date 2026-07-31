@@ -1,0 +1,19 @@
+# Vercel デプロイ除外設定
+
+# Claude Code 設定
+.claude/
+
+# 環境変数
+.env
+.env.local
+.env.*
+*.env
+
+# 依存関係
+node_modules/
+
+# 下書き・作業中ファイル
+_drafts/
+
+# ドキュメント（公開不要）
+README.md

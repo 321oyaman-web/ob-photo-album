@@ -1,0 +1,11 @@
+{
+  "name": "ob-photo-album",
+  "version": "1.0.0",
+  "private": true,
+  "description": "サークルOB会 思い出アルバム（Cloudflare R2 + チャットボット）",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {}
+}

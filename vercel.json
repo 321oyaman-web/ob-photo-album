@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "buildCommand": null,
+  "outputDirectory": ".",
+  "functions": {
+    "api/login.js": { "maxDuration": 10 },
+    "api/photos.js": { "maxDuration": 15 },
+    "api/upload-url.js": { "maxDuration": 10 },
+    "api/register.js": { "maxDuration": 15 },
+    "api/delete.js": { "maxDuration": 15 }
+  },
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Referrer-Policy", "value": "no-referrer" },
+        { "key": "X-Robots-Tag", "value": "noindex, nofollow" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+# Claude Code 設定
+.claude/
+
+# 依存関係
+node_modules/
+
+# 環境変数（実キーは絶対にコミットしない）
+.env
+.env.local
+.env.*
+*.env
+# ダミーのテンプレートだけは例外的に記録する（実キーは含めない）
+!.env.example
+
+# Vercel
+.vercel/
+
+# 下書き・作業中ファイル
+_drafts/
+
+# OS が生成するファイル
+Thumbs.db
+desktop.ini
+.DS_Store
