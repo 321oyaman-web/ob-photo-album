@@ -47,33 +47,16 @@
 > ⚠️ 控えたキーは **OneDrive の中に保存しないでください**。
 > ローカルに置く場合は `C:\Users\qqdx4\secrets\ob-photo-album\.env` など OneDrive の外へ。
 
-### 3. R2 のCORS設定（これを忘れるとアップロードできません）
-
-バケットの **Settings** → **CORS Policy** → **Edit** に、以下を貼り付けます。
-`https://あなたのサイト.vercel.app` の部分は、Vercel で発行された実際のURLに置き換えてください。
-
-```json
-[
-  {
-    "AllowedOrigins": [
-      "https://あなたのサイト.vercel.app",
-      "http://localhost:3000"
-    ],
-    "AllowedMethods": ["GET", "PUT"],
-    "AllowedHeaders": ["*"],
-    "ExposeHeaders": ["ETag"],
-    "MaxAgeSeconds": 3600
-  }
-]
-```
-
-### 4. Vercel にデプロイする
+### 3. Vercel にデプロイする
 
 1. このフォルダーを GitHub のリポジトリにプッシュする（**Private** 推奨）
+   - Vercel の Hobby プランは **Git organization 所有のリポジトリに接続できません**。
+     必ず**個人アカウント配下**にリポジトリを作ってください
 2. [Vercel](https://vercel.com/) で **Add New → Project** からそのリポジトリを選ぶ
 3. Framework Preset は **Other**、Build Command は空のままで **Deploy**
+4. 発行された URL（`https://〇〇.vercel.app`）を控える
 
-### 5. 環境変数を設定する
+### 4. 環境変数を設定する
 
 Vercel のプロジェクト画面 → **Settings** → **Environment Variables** に以下を登録します。
 （`.env.example` と同じ項目です。**コードには絶対に書かないでください**）
@@ -95,6 +78,32 @@ powershell -Command "[Convert]::ToBase64String((1..32|%{Get-Random -Max 256}))"
 ```
 
 登録後、**Deployments → 最新のデプロイ → Redeploy** で環境変数を反映させてください。
+
+### 5. R2 のCORS設定（これを忘れるとアップロードだけが失敗します）
+
+手順3で控えた URL を使います。バケットの **Settings** → **CORS Policy** → **Edit** に貼り付けてください。
+
+```json
+[
+  {
+    "AllowedOrigins": ["https://あなたのサイト.vercel.app"],
+    "AllowedMethods": ["GET", "PUT"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+
+> 写真の**表示**は `<img>` タグ経由なので CORS 不要ですが、**アップロード**はブラウザから
+> R2 へ直接 PUT するため CORS が必須です。「見られるのに追加できない」場合はここを疑ってください。
+
+### 6. 動作確認
+
+1. サイトを開き、**管理用の合言葉**でログイン
+2. 「写真を追加」から1枚アップロードして、ギャラリーに出るか確認
+3. 写真をタップ →「ダウンロード」で保存できるか確認
+4. チャットボットに「何枚ある？」と聞いて応答するか確認
 
 ---
 
