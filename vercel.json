@@ -3,6 +3,7 @@
   "buildCommand": null,
   "outputDirectory": ".",
   "functions": {
+    "api/health.js": { "maxDuration": 15 },
     "api/login.js": { "maxDuration": 10 },
     "api/photos.js": { "maxDuration": 15 },
     "api/upload-url.js": { "maxDuration": 10 },
