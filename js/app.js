@@ -15,7 +15,7 @@
     role: '',
     photos: [],                                  // サーバーから取得した全写真
     visible: [],                                 // 絞り込み後に表示している写真
-    filter: { year: null, event: null, query: '' },
+    filter: { category: null, year: null, event: null, query: '' },
     lightboxIndex: -1,
     pickedFiles: [],
   };
@@ -41,6 +41,7 @@
     logoutBtn: $('logout-btn'),
     uploadOpenBtn: $('upload-open-btn'),
     searchInput: $('search-input'),
+    categoryChips: $('category-chips'),
     filterChips: $('filter-chips'),
     statusBar: $('status-bar'),
     gallery: $('gallery'),
@@ -50,6 +51,8 @@
     dropZone: $('drop-zone'),
     fileInput: $('file-input'),
     pickedInfo: $('picked-info'),
+    metaCategory: $('meta-category'),
+    categoryHint: $('category-hint'),
     metaYear: $('meta-year'),
     metaEvent: $('meta-event'),
     metaTags: $('meta-tags'),
@@ -182,55 +185,111 @@
     el.headerCount.textContent = `全 ${total} 枚 ・ ${roleLabel}`;
   }
 
-  /* 年とイベントの選択肢を写真データから自動生成する */
+  /* 大分類は表示順を固定する（データの並び順に左右されないように） */
+  const CATEGORY_ORDER = ['学生時代', 'OB/OG会', 'その他'];
+
+  /* 写真の集合から選択肢を取り出す */
+  function facetsOf(list) {
+    return {
+      categories: [...new Set(list.map((p) => p.category).filter(Boolean))]
+        .sort((a, b) => CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(b)),
+      years: [...new Set(list.map((p) => p.year).filter(Boolean))].sort((a, b) => b - a),
+      events: [...new Set(list.map((p) => p.event).filter(Boolean))].sort(),
+    };
+  }
+
+  /* 全体の選択肢。チャットボットはこちらを使う。
+     絞り込み中の内容に左右されると、「サマーキャンプ」のように
+     今表示されていないイベント名を聞き取れなくなるため */
   function getFacets() {
-    const years = [...new Set(state.photos.map((p) => p.year).filter(Boolean))].sort((a, b) => b - a);
-    const events = [...new Set(state.photos.map((p) => p.event).filter(Boolean))].sort();
-    return { years, events };
+    return facetsOf(state.photos);
+  }
+
+  /* 絞り込みボタン用。年とイベントは「選択中の大分類の中にあるもの」だけに絞る。
+     学生時代なら活動名、OB/OG会なら開催年が並ぶ、という自然な二段階になる */
+  function getScopedFacets() {
+    const scoped = state.filter.category
+      ? state.photos.filter((p) => p.category === state.filter.category)
+      : state.photos;
+    const { years, events } = facetsOf(scoped);
+    /* 大分類そのものは常に全件から出す（絞り込んでも他の分類へ移動できるように） */
+    return { categories: facetsOf(state.photos).categories, years, events };
+  }
+
+  function makeChip(container, label, isActive, onClick) {
+    const btn = document.createElement('button');
+    btn.className = `chip${isActive ? ' is-active' : ''}`;
+    btn.type = 'button';
+    btn.textContent = label;
+    btn.addEventListener('click', onClick);
+    container.appendChild(btn);
   }
 
   function renderChips() {
-    const { years, events } = getFacets();
+    const { categories, years, events } = getScopedFacets();
+
+    /* --- 1段目: 大分類 --- */
+    el.categoryChips.innerHTML = '';
+    /* 1種類しか無いうちは並べても意味がないので隠す */
+    el.categoryChips.hidden = categories.length < 2;
+
+    if (!el.categoryChips.hidden) {
+      makeChip(el.categoryChips, 'すべて', !state.filter.category, () => {
+        state.filter.category = null;
+        state.filter.year = null;
+        state.filter.event = null;
+        renderChips();
+        applyFilter();
+      });
+
+      categories.forEach((category) => {
+        makeChip(el.categoryChips, category, state.filter.category === category, () => {
+          const next = state.filter.category === category ? null : category;
+          state.filter.category = next;
+          /* 大分類を変えると、年やイベントの選択肢そのものが変わるため解除する */
+          state.filter.year = null;
+          state.filter.event = null;
+          renderChips();
+          applyFilter();
+        });
+      });
+    }
+
+    /* --- 2段目: 年・イベント --- */
     el.filterChips.innerHTML = '';
+    el.filterChips.hidden = years.length === 0 && events.length === 0;
 
-    const addChip = (label, isActive, onClick) => {
-      const btn = document.createElement('button');
-      btn.className = `chip${isActive ? ' is-active' : ''}`;
-      btn.type = 'button';
-      btn.textContent = label;
-      btn.addEventListener('click', onClick);
-      el.filterChips.appendChild(btn);
-    };
-
-    const noFilter = !state.filter.year && !state.filter.event;
-    addChip('すべて', noFilter, () => {
-      state.filter.year = null;
-      state.filter.event = null;
-      renderChips();
-      applyFilter();
-    });
-
-    years.forEach((year) => {
-      addChip(`${year}年`, state.filter.year === year, () => {
-        state.filter.year = state.filter.year === year ? null : year;
+    if (!el.filterChips.hidden) {
+      makeChip(el.filterChips, 'すべて', !state.filter.year && !state.filter.event, () => {
+        state.filter.year = null;
+        state.filter.event = null;
         renderChips();
         applyFilter();
       });
-    });
 
-    events.forEach((event) => {
-      addChip(event, state.filter.event === event, () => {
-        state.filter.event = state.filter.event === event ? null : event;
-        renderChips();
-        applyFilter();
+      years.forEach((year) => {
+        makeChip(el.filterChips, `${year}年`, state.filter.year === year, () => {
+          state.filter.year = state.filter.year === year ? null : year;
+          renderChips();
+          applyFilter();
+        });
       });
-    });
+
+      events.forEach((event) => {
+        makeChip(el.filterChips, event, state.filter.event === event, () => {
+          state.filter.event = state.filter.event === event ? null : event;
+          renderChips();
+          applyFilter();
+        });
+      });
+    }
   }
 
   /* 写真1件が検索語に一致するか判定する（イベント・タグ・説明・年をまとめて対象にする） */
   function matchesQuery(photo, query) {
     if (!query) return true;
     const haystack = [
+      photo.category,
       photo.event,
       photo.caption,
       photo.filename,
@@ -247,9 +306,10 @@
   }
 
   function applyFilter() {
-    const { year, event, query } = state.filter;
+    const { category, year, event, query } = state.filter;
 
     state.visible = state.photos.filter((p) => {
+      if (category && p.category !== category) return false;
       if (year && p.year !== year) return false;
       if (event && p.event !== event) return false;
       return matchesQuery(p, query);
@@ -429,6 +489,19 @@
 
   el.uploadOpenBtn.addEventListener('click', openUpload);
 
+  /* 大分類によって、第2階層として効く項目が変わることを画面上で伝える */
+  function updateCategoryHint() {
+    const hints = {
+      '学生時代': 'イベント名（ドラマ、ディベート など）が第2階層になります。撮影年も入れておくと年で絞り込めます。',
+      'OB/OG会': '撮影年がそのまま第2階層になります（2026年、2023年 など）。撮影年は必ず入れてください。',
+      'その他': '年・イベント名は任意です。あとから探せるよう、ひとこと説明を入れておくことをおすすめします。',
+    };
+    el.categoryHint.textContent = hints[el.metaCategory.value] || '';
+  }
+
+  el.metaCategory.addEventListener('change', updateCategoryHint);
+  updateCategoryHint();
+
   document.querySelectorAll('[data-close-upload]').forEach((node) => {
     node.addEventListener('click', closeUpload);
   });
@@ -513,12 +586,21 @@
 
   /* 署名付き URL へ直接 PUT する */
   async function putToR2(url, blob) {
-    const res = await fetch(url, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'image/jpeg' },
-      body: blob,
-    });
-    if (!res.ok) throw new Error(`アップロードに失敗しました（${res.status}）`);
+    let res;
+    try {
+      res = await fetch(url, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'image/jpeg' },
+        body: blob,
+      });
+    } catch {
+      /* 通信が成立しない＝ブラウザ側で止められている。原因はほぼ CORS 設定漏れ */
+      throw new Error('R2 への送信がブラウザにブロックされました。R2 のCORS設定を確認してください');
+    }
+    if (res.status === 403) {
+      throw new Error('R2 に拒否されました（403）。APIトークンの権限を確認してください');
+    }
+    if (!res.ok) throw new Error(`R2 への保存に失敗しました（${res.status}）`);
   }
 
   el.uploadStartBtn.addEventListener('click', async () => {
@@ -529,6 +611,7 @@
     el.uploadProgress.hidden = false;
 
     const meta = {
+      category: el.metaCategory.value,
       year: el.metaYear.value ? Number(el.metaYear.value) : null,
       event: el.metaEvent.value.trim(),
       tags: el.metaTags.value.trim(),
@@ -570,8 +653,8 @@
           }),
         });
       } catch (err) {
-        console.error(err);
-        failed.push(`${file.name}（${err.message}）`);
+        console.error(`[アップロード失敗] ${file.name}`, err);
+        failed.push({ name: file.name, reason: err.message });
       }
 
       done += 1;
@@ -579,17 +662,27 @@
     }
 
     const succeeded = files.length - failed.length;
-    el.progressText.textContent = `完了：${succeeded} 枚を追加しました`;
 
     if (failed.length > 0) {
-      toast(`${failed.length} 枚は失敗しました（HEIC 形式などは非対応の場合があります）`, true);
+      /* 失敗理由を推測で書かず、実際に起きたエラーをそのまま画面に出す */
+      const reason = failed[0].reason;
+      el.progressText.textContent =
+        `${succeeded} 枚成功 / ${failed.length} 枚失敗\n理由: ${reason}`;
+      toast(`${failed.length} 枚失敗: ${reason}`, true);
       console.warn('アップロードに失敗したファイル:', failed);
     } else {
+      el.progressText.textContent = `完了：${succeeded} 枚を追加しました`;
       toast(`${succeeded} 枚をアルバムに追加しました`);
     }
 
     await loadPhotos();
-    setTimeout(closeUpload, 1200);
+
+    if (failed.length === 0) {
+      setTimeout(closeUpload, 1200);
+    } else {
+      /* 失敗時は画面を閉じない。理由を読めるようにし、そのまま再試行できるようにする */
+      el.uploadStartBtn.disabled = false;
+    }
   });
 
   /* ----------------------------------------

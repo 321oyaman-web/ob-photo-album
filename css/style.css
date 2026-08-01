@@ -360,6 +360,23 @@ input { font: inherit; }
   border-color: var(--ink);
 }
 
+/* 1段目（大分類）は主役なので、少し大きく強めに見せる */
+.chips--category .chip {
+  padding: 8px 18px;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.chips--category .chip.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+@media (prefers-color-scheme: dark) {
+  .chips--category .chip.is-active { color: #1a1206; }
+}
+
 @media (prefers-color-scheme: dark) {
   .chip.is-active { color: #12171f; background: var(--ink); }
 }
@@ -643,6 +660,27 @@ input { font: inherit; }
   font-size: 11.5px;
   line-height: 1.75;
   color: var(--ink-mute);
+}
+
+/* 大分類のすぐ下に出す補足。入力欄との距離を詰める */
+.hint--tight {
+  margin-top: 8px;
+  padding: 8px 11px;
+  color: var(--ink-soft);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+}
+
+/* 大分類のプルダウン。既定の見た目だと入力欄と揃わないため調整する */
+select.field__input {
+  appearance: none;
+  cursor: pointer;
+  padding-right: 34px;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+                    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: right 16px center, right 11px center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
 }
 
 .progress { margin-top: 16px; }

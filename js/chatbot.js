@@ -106,13 +106,32 @@
     return null;
   }
 
+  /* 大分類（学生時代 / OB/OG会 / その他）を聞き取る */
+  const CATEGORY_PATTERNS = [
+    { pattern: /学生時代|学生の頃|学生のころ|現役時代|現役の頃/, value: '学生時代' },
+    { pattern: /OB\s*[\/・]?\s*OG\s*会|OBOG会|OB会|OG会/i, value: 'OB/OG会' },
+    { pattern: /その他/, value: 'その他' },
+  ];
+
+  function extractCategory(text) {
+    const hit = CATEGORY_PATTERNS.find((c) => c.pattern.test(text));
+    return hit ? hit.value : null;
+  }
+
   /* 検索対象となるキーワードを取り出す。助詞や定型句は落とす */
   function extractKeywords(text) {
     /* 年は extractYear が別途拾うので、キーワードからは取り除く。
        残しておくと「2019年の写真」が「2019年 の 2019」のような表示になってしまう */
+    /* 直後の「の」も一緒に取り除く。残すと「学生時代のドラマ」が
+       「のドラマ」という検索語になってしまう */
     let base = text
-      .replace(/(19\d{2}|20\d{2})\s*年?/g, ' ')
-      .replace(/(令和|平成|昭和)\s*(元|\d{1,2})\s*年?/g, ' ');
+      .replace(/(19\d{2}|20\d{2})\s*年?の?/g, ' ')
+      .replace(/(令和|平成|昭和)\s*(元|\d{1,2})\s*年?の?/g, ' ');
+
+    /* 大分類も extractCategory が別途拾うので、キーワードからは取り除く */
+    CATEGORY_PATTERNS.forEach((c) => {
+      base = base.replace(new RegExp(c.pattern.source + 'の?', c.pattern.flags), ' ');
+    });
 
     const noise = [
       'の写真', '写真', 'を', 'が', 'は', 'に', 'で', 'と', 'も', 'から', 'まで',
@@ -144,7 +163,7 @@
     if (!text) return;
 
     const photos = window.Album.getPhotos();
-    const { years, events } = window.Album.getFacets();
+    const { categories, years, events } = window.Album.getFacets();
 
     /* --- 挨拶 --- */
     if (has(text, ['こんにちは', 'こんばんは', 'おはよう', 'はじめまして', 'よろしく'])) {
@@ -162,8 +181,10 @@
       botSay(
         'できることは次のとおりです。\n\n' +
         '【写真を出す】\n' +
+        '・「学生時代のドラマ」…大分類とイベントで絞り込み\n' +
+        '・「2023年のOB会」…大分類と年で絞り込み\n' +
         '・「2019年の写真」…年で絞り込み\n' +
-        '・「夏合宿の写真ある？」…イベント名やタグで検索\n' +
+        '・「花見の写真ある？」…イベント名やタグで検索\n' +
         '・「最近の写真」「ランダムで見せて」\n' +
         '・写真をタップすると拡大表示され、そこからダウンロードできます\n\n' +
         '【写真を入れる】\n' +
@@ -279,15 +300,16 @@
       return;
     }
 
-    /* --- 年・キーワードによる検索（ここが主要機能） --- */
+    /* --- 大分類・年・キーワードによる検索（ここが主要機能） --- */
+    const category = extractCategory(text);
     const year = extractYear(text);
     const keywords = extractKeywords(text);
 
-    /* 年もキーワードも取れない場合は聞き返す */
-    if (!year && !keywords) {
+    /* どの条件も取れない場合は聞き返す */
+    if (!category && !year && !keywords) {
       botSay(
         'すみません、うまく聞き取れませんでした。\n' +
-        '「2019年の写真」「合宿の写真ある？」のように、年やイベント名を入れて教えてください。',
+        '「学生時代のドラマ」「2023年のOB会」のように、大分類・年・イベント名を入れて教えてください。',
         [],
         defaultQuickReplies()
       );
@@ -298,6 +320,7 @@
     const matchedEvent = events.find((event) => text.includes(event));
 
     const filter = {};
+    if (category) filter.category = category;
     if (year) filter.year = year;
     if (matchedEvent) {
       filter.event = matchedEvent;
@@ -305,24 +328,38 @@
       filter.query = keywords;
     }
 
+    /* 条件を人が読める形にする（「学生時代 の 2019年 の ドラマ」など）。
+       大分類とイベント名が同じ場合は重ねて表示しない */
+    const describe = (f) => {
+      const parts = [
+        f.category || '',
+        f.year ? `${f.year}年` : '',
+        f.event || f.query || '',
+      ].filter(Boolean);
+      return [...new Set(parts)].join(' の ');
+    };
+
+    const conditionLabel = describe(filter);
     let result = window.Album.setFilter(filter);
 
     /* 見つからなかった場合は、条件を緩めて再検索し、代わりの候補を提案する */
     if (result.length === 0) {
-      const conditionText = [
-        year ? `${year}年` : '',
-        matchedEvent || keywords,
-      ].filter(Boolean).join(' の ');
+      /* 絞り込みの強い順（イベント/キーワード → 年 → 大分類）に条件を落としていく */
+      const relaxed = { ...filter };
+      delete relaxed.event;
+      delete relaxed.query;
 
-      /* 年だけ、またはキーワードだけで再検索してみる */
-      const fallbackFilter = year ? { year } : { query: keywords };
-      const fallback = window.Album.setFilter(fallbackFilter);
+      let fallback = Object.keys(relaxed).length > 0 ? window.Album.setFilter(relaxed) : [];
+
+      if (fallback.length === 0 && category) {
+        Object.keys(relaxed).forEach((k) => { if (k !== 'category') delete relaxed[k]; });
+        fallback = window.Album.setFilter(relaxed);
+      }
 
       if (fallback.length > 0) {
-        const fallbackLabel = year ? `${year}年` : keywords;
         botSay(
-          `「${conditionText}」に一致する写真は見つかりませんでした。\n` +
-          `代わりに「${fallbackLabel}」で ${fallback.length} 枚が見つかったので表示しています。`,
+          `「${conditionLabel}」に一致する写真は見つかりませんでした。\n` +
+          `代わりに「${describe(relaxed)}」で ${fallback.length} 枚が見つかったので表示しています。`,
           fallback,
           defaultQuickReplies()
         );
@@ -330,7 +367,8 @@
         /* 該当が無いときは絞り込みを解除し、その旨も伝える */
         window.Album.setFilter({});
         botSay(
-          `「${conditionText}」の写真は見つかりませんでした。\n` +
+          `「${conditionLabel}」の写真は見つかりませんでした。\n` +
+          (categories.length > 0 ? `大分類：${categories.join(' / ')}\n` : '') +
           (years.length > 0 ? `登録があるのは ${years.join('年 / ')}年 です。` : '') +
           (events.length > 0 ? `\nイベント：${events.slice(0, 8).join(' / ')}` : '') +
           '\n\n（ギャラリーは全件表示に戻しました）',
@@ -340,11 +378,6 @@
       }
       return;
     }
-
-    const conditionLabel = [
-      year ? `${year}年` : '',
-      matchedEvent || keywords,
-    ].filter(Boolean).join(' の ');
 
     botSay(
       `「${conditionLabel}」の写真を ${result.length} 枚見つけました。` +
@@ -358,9 +391,10 @@
 
   /* 状況に応じたクイック返信を組み立てる */
   function defaultQuickReplies() {
-    const { years, events } = window.Album.getFacets();
+    const { categories, years, events } = window.Album.getFacets();
     const replies = [];
 
+    categories.slice(0, 2).forEach((c) => replies.push(c));
     if (years.length > 0) replies.push(`${years[0]}年の写真`);
     if (events.length > 0) replies.push(events[0]);
     replies.push('何枚ある？');

@@ -6,6 +6,9 @@
 import { requireRole, readJsonBody } from './_auth.js';
 import { readManifest, writeManifest } from './_r2.js';
 
+/* 大分類は決められた3つのみ。表記ゆれが混ざると絞り込みが分裂するため固定する */
+export const CATEGORIES = ['学生時代', 'OB/OG会', 'その他'];
+
 /* 入力文字列の長さを制限し、想定外の巨大データが混入するのを防ぐ */
 function trimText(value, maxLength) {
   return String(value ?? '').trim().slice(0, maxLength);
@@ -48,6 +51,8 @@ export default async function handler(req, res) {
       id,
       key,
       thumbKey,
+      /* 一覧に無い値が来たら「その他」に寄せる */
+      category: CATEGORIES.includes(body.category) ? body.category : 'その他',
       filename: trimText(body.filename, 120) || `${id}.jpg`,
       year: Number.isInteger(year) && year >= 1900 && year <= 2100 ? year : null,
       event: trimText(body.event, 60),

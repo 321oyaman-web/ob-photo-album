@@ -63,6 +63,8 @@ export default async function handler(req, res) {
     const items = sorted.map((p) => ({
       id: p.id,
       filename: p.filename,
+      /* 大分類の導入前に登録された写真は値を持たないため「その他」に寄せる */
+      category: p.category || 'その他',
       year: p.year,
       event: p.event,
       tags: p.tags || [],

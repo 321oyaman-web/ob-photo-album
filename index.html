@@ -88,7 +88,8 @@
             aria-label="写真をキーワードで検索"
           >
         </div>
-        <div class="chips" id="filter-chips" role="group" aria-label="絞り込み"></div>
+        <div class="chips chips--category" id="category-chips" role="group" aria-label="大分類"></div>
+        <div class="chips" id="filter-chips" role="group" aria-label="年・イベントで絞り込み"></div>
       </div>
     </div>
 
@@ -129,6 +130,15 @@
 
         <p class="picked" id="picked-info" hidden></p>
 
+        <div class="field">
+          <label class="field__label" for="meta-category">大分類</label>
+          <select class="field__input" id="meta-category">
+            <option value="学生時代">学生時代</option>
+            <option value="OB/OG会">OB/OG会</option>
+            <option value="その他">その他</option>
+          </select>
+        </div>
+
         <div class="form-grid">
           <div class="field">
             <label class="field__label" for="meta-year">撮影年</label>
@@ -136,9 +146,21 @@
           </div>
           <div class="field">
             <label class="field__label" for="meta-event">イベント名</label>
-            <input class="field__input" type="text" id="meta-event" placeholder="夏合宿" maxlength="60">
+            <input class="field__input" type="text" id="meta-event" list="event-suggestions"
+                   placeholder="ドラマ" maxlength="60">
+            <datalist id="event-suggestions">
+              <option value="ドラマ"></option>
+              <option value="ディベート"></option>
+              <option value="ディスカッション"></option>
+              <option value="サマーキャンプ"></option>
+              <option value="花見"></option>
+              <option value="入学"></option>
+              <option value="卒業"></option>
+            </datalist>
           </div>
         </div>
+
+        <p class="hint hint--tight" id="category-hint"></p>
 
         <div class="field">
           <label class="field__label" for="meta-tags">タグ（カンマ区切り）</label>
