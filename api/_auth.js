@@ -34,12 +34,27 @@ function getSessionSecret() {
    戻り値: 'admin' | 'viewer' | null
 ---------------------------------------- */
 export function resolveRole(password) {
-  const adminPassword = process.env.ADMIN_PASSWORD;
-  const albumPassword = process.env.ALBUM_PASSWORD;
+  /* 管理画面への貼り付け時に紛れ込む前後の空白・改行を無視する。
+     入力側も同様に扱い、「見た目は同じなのに一致しない」を防ぐ */
+  const adminPassword = (process.env.ADMIN_PASSWORD || '').trim();
+  const albumPassword = (process.env.ALBUM_PASSWORD || '').trim();
+  const input = String(password ?? '').trim();
 
-  if (adminPassword && safeEqual(password, adminPassword)) return 'admin';
-  if (albumPassword && safeEqual(password, albumPassword)) return 'viewer';
+  if (!input) return null;
+  if (adminPassword && safeEqual(input, adminPassword)) return 'admin';
+  if (albumPassword && safeEqual(input, albumPassword)) return 'viewer';
   return null;
+}
+
+/* ----------------------------------------
+   どの合言葉がサーバー側に設定済みかを返す（値そのものは返さない）
+   「合言葉が違う」のか「そもそも未設定」なのかを切り分けるために使う
+---------------------------------------- */
+export function getConfiguredRoles() {
+  return {
+    admin: Boolean((process.env.ADMIN_PASSWORD || '').trim()),
+    viewer: Boolean((process.env.ALBUM_PASSWORD || '').trim()),
+  };
 }
 
 /* ----------------------------------------
