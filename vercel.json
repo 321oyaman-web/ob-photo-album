@@ -8,6 +8,7 @@
     "api/photos.js": { "maxDuration": 15 },
     "api/upload-url.js": { "maxDuration": 10 },
     "api/register.js": { "maxDuration": 15 },
+    "api/update.js": { "maxDuration": 15 },
     "api/delete.js": { "maxDuration": 15 }
   },
   "headers": [

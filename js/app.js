@@ -1,11 +1,24 @@
 /* ========================================
    OB会 思い出アルバム - メインスクリプト
-   ログイン／一覧表示／絞り込み／拡大表示／アップロード／削除を担当する
+   2026年8月29日のOB/OG会、1日分の写真をシーンごとに整理する。
+   ログイン／一覧表示／絞り込み／拡大表示／アップロード／修正／削除を担当し、
    チャットボットからは末尾の window.Album 経由で操作する
 ======================================== */
 
 (function () {
   'use strict';
+
+  /* シーンの一覧と並び順。api/_scenes.js と同じ内容を保つこと
+     （画面と保存側で食い違うと、選んだシーンが「その他」に寄せられてしまう） */
+  const SCENES = [
+    '受付・開会',
+    '集合写真',
+    '歓談',
+    'スピーチ・挨拶',
+    '余興・企画',
+    '二次会',
+    'その他',
+  ];
 
   /* ----------------------------------------
      アプリの状態
@@ -15,7 +28,8 @@
     role: '',
     photos: [],                                  // サーバーから取得した全写真
     visible: [],                                 // 絞り込み後に表示している写真
-    filter: { category: null, year: null, event: null, query: '' },
+    filter: { scene: null, query: '' },
+    editingId: null,
     lightboxIndex: -1,
     pickedFiles: [],
   };
@@ -41,8 +55,7 @@
     logoutBtn: $('logout-btn'),
     uploadOpenBtn: $('upload-open-btn'),
     searchInput: $('search-input'),
-    categoryChips: $('category-chips'),
-    filterChips: $('filter-chips'),
+    sceneChips: $('scene-chips'),
     statusBar: $('status-bar'),
     gallery: $('gallery'),
     emptyState: $('empty-state'),
@@ -51,10 +64,14 @@
     dropZone: $('drop-zone'),
     fileInput: $('file-input'),
     pickedInfo: $('picked-info'),
-    metaCategory: $('meta-category'),
-    categoryHint: $('category-hint'),
-    metaYear: $('meta-year'),
-    metaEvent: $('meta-event'),
+    metaScene: $('meta-scene'),
+    editModal: $('edit-modal'),
+    editTarget: $('edit-target'),
+    editScene: $('edit-scene'),
+    editTags: $('edit-tags'),
+    editCaption: $('edit-caption'),
+    editSaveBtn: $('edit-save-btn'),
+    lbEdit: $('lb-edit'),
     metaTags: $('meta-tags'),
     metaCaption: $('meta-caption'),
     uploadStartBtn: $('upload-start-btn'),
@@ -185,35 +202,15 @@
     el.headerCount.textContent = `全 ${total} 枚 ・ ${roleLabel}`;
   }
 
-  /* 大分類は表示順を固定する（データの並び順に左右されないように） */
-  const CATEGORY_ORDER = ['学生時代', 'OB/OG会', 'その他'];
-
-  /* 写真の集合から選択肢を取り出す */
-  function facetsOf(list) {
-    return {
-      categories: [...new Set(list.map((p) => p.category).filter(Boolean))]
-        .sort((a, b) => CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(b)),
-      years: [...new Set(list.map((p) => p.year).filter(Boolean))].sort((a, b) => b - a),
-      events: [...new Set(list.map((p) => p.event).filter(Boolean))].sort(),
-    };
+  /* 実際に写真があるシーンだけを、SCENES の並び順で返す */
+  function getScenes() {
+    const used = new Set(state.photos.map((p) => p.scene).filter(Boolean));
+    return SCENES.filter((s) => used.has(s));
   }
 
-  /* 全体の選択肢。チャットボットはこちらを使う。
-     絞り込み中の内容に左右されると、「サマーキャンプ」のように
-     今表示されていないイベント名を聞き取れなくなるため */
+  /* チャットボットから参照する選択肢 */
   function getFacets() {
-    return facetsOf(state.photos);
-  }
-
-  /* 絞り込みボタン用。年とイベントは「選択中の大分類の中にあるもの」だけに絞る。
-     学生時代なら活動名、OB/OG会なら開催年が並ぶ、という自然な二段階になる */
-  function getScopedFacets() {
-    const scoped = state.filter.category
-      ? state.photos.filter((p) => p.category === state.filter.category)
-      : state.photos;
-    const { years, events } = facetsOf(scoped);
-    /* 大分類そのものは常に全件から出す（絞り込んでも他の分類へ移動できるように） */
-    return { categories: facetsOf(state.photos).categories, years, events };
+    return { scenes: getScenes() };
   }
 
   function makeChip(container, label, isActive, onClick) {
@@ -226,75 +223,37 @@
   }
 
   function renderChips() {
-    const { categories, years, events } = getScopedFacets();
+    const scenes = getScenes();
 
-    /* --- 1段目: 大分類 --- */
-    el.categoryChips.innerHTML = '';
+    el.sceneChips.innerHTML = '';
     /* 1種類しか無いうちは並べても意味がないので隠す */
-    el.categoryChips.hidden = categories.length < 2;
+    el.sceneChips.hidden = scenes.length < 2;
+    if (el.sceneChips.hidden) return;
 
-    if (!el.categoryChips.hidden) {
-      makeChip(el.categoryChips, 'すべて', !state.filter.category, () => {
-        state.filter.category = null;
-        state.filter.year = null;
-        state.filter.event = null;
+    makeChip(el.sceneChips, 'すべて', !state.filter.scene, () => {
+      state.filter.scene = null;
+      renderChips();
+      applyFilter();
+    });
+
+    scenes.forEach((scene) => {
+      const count = state.photos.filter((p) => p.scene === scene).length;
+      makeChip(el.sceneChips, `${scene}（${count}）`, state.filter.scene === scene, () => {
+        state.filter.scene = state.filter.scene === scene ? null : scene;
         renderChips();
         applyFilter();
       });
-
-      categories.forEach((category) => {
-        makeChip(el.categoryChips, category, state.filter.category === category, () => {
-          const next = state.filter.category === category ? null : category;
-          state.filter.category = next;
-          /* 大分類を変えると、年やイベントの選択肢そのものが変わるため解除する */
-          state.filter.year = null;
-          state.filter.event = null;
-          renderChips();
-          applyFilter();
-        });
-      });
-    }
-
-    /* --- 2段目: 年・イベント --- */
-    el.filterChips.innerHTML = '';
-    el.filterChips.hidden = years.length === 0 && events.length === 0;
-
-    if (!el.filterChips.hidden) {
-      makeChip(el.filterChips, 'すべて', !state.filter.year && !state.filter.event, () => {
-        state.filter.year = null;
-        state.filter.event = null;
-        renderChips();
-        applyFilter();
-      });
-
-      years.forEach((year) => {
-        makeChip(el.filterChips, `${year}年`, state.filter.year === year, () => {
-          state.filter.year = state.filter.year === year ? null : year;
-          renderChips();
-          applyFilter();
-        });
-      });
-
-      events.forEach((event) => {
-        makeChip(el.filterChips, event, state.filter.event === event, () => {
-          state.filter.event = state.filter.event === event ? null : event;
-          renderChips();
-          applyFilter();
-        });
-      });
-    }
+    });
   }
 
-  /* 写真1件が検索語に一致するか判定する（イベント・タグ・説明・年をまとめて対象にする） */
+  /* 写真1件が検索語に一致するか判定する（シーン・タグ・説明をまとめて対象にする） */
   function matchesQuery(photo, query) {
     if (!query) return true;
     const haystack = [
-      photo.category,
-      photo.event,
+      photo.scene,
       photo.caption,
       photo.filename,
       (photo.tags || []).join(' '),
-      photo.year ? `${photo.year}年 ${photo.year}` : '',
     ].join(' ').toLowerCase();
 
     /* 空白区切りの語をすべて含むものを一致とみなす（AND 検索） */
@@ -306,12 +265,10 @@
   }
 
   function applyFilter() {
-    const { category, year, event, query } = state.filter;
+    const { scene, query } = state.filter;
 
     state.visible = state.photos.filter((p) => {
-      if (category && p.category !== category) return false;
-      if (year && p.year !== year) return false;
-      if (event && p.event !== event) return false;
+      if (scene && p.scene !== scene) return false;
       return matchesQuery(p, query);
     });
 
@@ -369,10 +326,17 @@
   /* カードやライトボックスに出す説明文を組み立てる */
   function buildLabel(photo) {
     const parts = [];
-    if (photo.year) parts.push(`${photo.year}年`);
-    if (photo.event) parts.push(photo.event);
+    if (photo.scene) parts.push(photo.scene);
     if (photo.caption) parts.push(photo.caption);
     return parts.join(' ・ ');
+  }
+
+  /* 撮影時刻を「14:32」の形にする（1日のイベントなので時刻だけで十分） */
+  function formatTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   }
 
   /* ----------------------------------------
@@ -388,8 +352,16 @@
     document.body.style.overflow = 'hidden';
     el.lbImg.src = '';
     el.lbImg.alt = buildLabel(photo) || '思い出の写真';
-    el.lbMeta.textContent = `${buildLabel(photo) || photo.filename}（${index + 1} / ${state.visible.length}）`;
+
+    const time = formatTime(photo.takenAt);
+    el.lbMeta.textContent = [
+      buildLabel(photo) || photo.filename,
+      time && `${time} 撮影`,
+      `${index + 1} / ${state.visible.length}`,
+    ].filter(Boolean).join(' ・ ');
+
     el.lbDelete.hidden = state.role !== 'admin';
+    el.lbEdit.hidden = state.role !== 'admin';
 
     try {
       /* 原寸画像の URL は表示するタイミングで都度発行する */
@@ -488,19 +460,6 @@
   }
 
   el.uploadOpenBtn.addEventListener('click', openUpload);
-
-  /* 大分類によって、第2階層として効く項目が変わることを画面上で伝える */
-  function updateCategoryHint() {
-    const hints = {
-      '学生時代': 'イベント名（ドラマ、ディベート など）が第2階層になります。撮影年も入れておくと年で絞り込めます。',
-      'OB/OG会': '撮影年がそのまま第2階層になります（2026年、2023年 など）。撮影年は必ず入れてください。',
-      'その他': '年・イベント名は任意です。あとから探せるよう、ひとこと説明を入れておくことをおすすめします。',
-    };
-    el.categoryHint.textContent = hints[el.metaCategory.value] || '';
-  }
-
-  el.metaCategory.addEventListener('change', updateCategoryHint);
-  updateCategoryHint();
 
   document.querySelectorAll('[data-close-upload]').forEach((node) => {
     node.addEventListener('click', closeUpload);
@@ -611,9 +570,7 @@
     el.uploadProgress.hidden = false;
 
     const meta = {
-      category: el.metaCategory.value,
-      year: el.metaYear.value ? Number(el.metaYear.value) : null,
-      event: el.metaEvent.value.trim(),
+      scene: el.metaScene.value,
       tags: el.metaTags.value.trim(),
       caption: el.metaCaption.value.trim(),
     };
@@ -699,6 +656,70 @@
   });
 
   /* ----------------------------------------
+     写真情報の修正（管理モードのみ）
+  ---------------------------------------- */
+  function fillSceneOptions(select) {
+    select.innerHTML = '';
+    SCENES.forEach((scene) => {
+      const option = document.createElement('option');
+      option.value = scene;
+      option.textContent = scene;
+      select.appendChild(option);
+    });
+  }
+
+  fillSceneOptions(el.metaScene);
+  fillSceneOptions(el.editScene);
+
+  function openEdit(photo) {
+    if (state.role !== 'admin' || !photo) return;
+
+    state.editingId = photo.id;
+    el.editTarget.textContent = `${photo.filename}${formatTime(photo.takenAt) ? `（${formatTime(photo.takenAt)} 撮影）` : ''}`;
+    el.editScene.value = SCENES.includes(photo.scene) ? photo.scene : 'その他';
+    el.editTags.value = (photo.tags || []).join(', ');
+    el.editCaption.value = photo.caption || '';
+    el.editModal.hidden = false;
+  }
+
+  function closeEdit() {
+    el.editModal.hidden = true;
+    state.editingId = null;
+  }
+
+  document.querySelectorAll('[data-close-edit]').forEach((node) => {
+    node.addEventListener('click', closeEdit);
+  });
+
+  el.lbEdit.addEventListener('click', () => openEdit(state.visible[state.lightboxIndex]));
+
+  el.editSaveBtn.addEventListener('click', async () => {
+    const id = state.editingId;
+    if (!id) return;
+
+    el.editSaveBtn.disabled = true;
+    try {
+      await api('/api/update', {
+        method: 'POST',
+        body: JSON.stringify({
+          id,
+          scene: el.editScene.value,
+          tags: el.editTags.value,
+          caption: el.editCaption.value,
+        }),
+      });
+      closeEdit();
+      closeLightbox();
+      toast('写真の情報を更新しました');
+      await loadPhotos();
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      el.editSaveBtn.disabled = false;
+    }
+  });
+
+  /* ----------------------------------------
      チャットボットから使う公開インターフェース
   ---------------------------------------- */
   window.Album = {
@@ -706,13 +727,15 @@
     getPhotos: () => state.photos,
     getVisible: () => state.visible,
     getFacets,
+    getScenes,
     buildLabel,
     matchesQuery,
     toast,
+    SCENES,
 
     /* 条件を指定して絞り込み、表示中の写真を返す */
     setFilter(next) {
-      state.filter = { year: null, event: null, query: '', ...next };
+      state.filter = { scene: null, query: '', ...next };
       el.searchInput.value = state.filter.query;
       renderChips();
       const result = applyFilter();

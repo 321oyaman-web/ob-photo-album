@@ -54,23 +54,23 @@ export default async function handler(req, res) {
       });
     }
 
-    /* 一覧: 新しい写真が先頭に来るよう並べ替える */
+    /* 一覧: 1日のイベントなので、当日の流れを追えるよう撮影時刻の古い順に並べる。
+       撮影時刻が不明なものは、登録した順で末尾にまとめる */
     const sorted = [...photos].sort((a, b) => {
-      const byDate = (b.takenAt || '').localeCompare(a.takenAt || '');
-      return byDate !== 0 ? byDate : (b.uploadedAt || '').localeCompare(a.uploadedAt || '');
+      const byTaken = (a.takenAt || '￿').localeCompare(b.takenAt || '￿');
+      return byTaken !== 0 ? byTaken : (a.uploadedAt || '').localeCompare(b.uploadedAt || '');
     });
 
     const items = sorted.map((p) => ({
       id: p.id,
       filename: p.filename,
-      /* 大分類の導入前に登録された写真は値を持たないため「その他」に寄せる */
-      category: p.category || 'その他',
-      year: p.year,
-      event: p.event,
+      /* シーン導入前に登録された写真は値を持たないため「その他」に寄せる */
+      scene: p.scene || 'その他',
       tags: p.tags || [],
       caption: p.caption || '',
       takenAt: p.takenAt || '',
       uploadedAt: p.uploadedAt,
+      updatedAt: p.updatedAt || '',
       width: p.width,
       height: p.height,
       size: p.size,

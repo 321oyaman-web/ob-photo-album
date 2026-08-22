@@ -1,8 +1,7 @@
 /* ========================================
    OB会 思い出アルバム - チャットボット「アルバム係」
-   ルールベース（API 費用ゼロ）で、写真の「出し入れ」を会話から操作する
-     出す … 年・イベント・キーワードでの検索、拡大表示、ダウンロード
-     入れる … アップロード画面の呼び出し（管理用の合言葉が必要）
+   2026年8月29日のOB/OG会、1日分の写真を会話から探せるようにする。
+   ルールベース（API 費用ゼロ）で動く。
 ======================================== */
 
 (function () {
@@ -22,6 +21,16 @@
 
   /* 返答に添えるサムネイルの最大枚数（多すぎると会話が読みにくくなる） */
   const THUMB_LIMIT = 6;
+
+  /* シーン名の言い換え。話し言葉でも聞き取れるようにする */
+  const SCENE_ALIASES = {
+    '受付・開会': ['開会', 'オープニング', '始まり', 'はじまり', '冒頭'],
+    '集合写真': ['全体写真', '記念写真', 'みんなで', '全員'],
+    '歓談': ['談笑', 'おしゃべり', '交流', 'テーブル'],
+    'スピーチ・挨拶': ['スピーチ', '挨拶', 'あいさつ', '祝辞', '乾杯'],
+    '余興・企画': ['余興', '出し物', '企画', 'ゲーム'],
+    '二次会': ['2次会', '２次会', '打ち上げ', 'アフター'],
+  };
 
   let greeted = false;
 
@@ -85,69 +94,46 @@
      入力の解析（ルールベース）
   ---------------------------------------- */
 
-  /* 和暦・西暦のどちらでも年を拾う */
-  function extractYear(text) {
-    const western = text.match(/(19\d{2}|20\d{2})\s*年?/);
-    if (western) return Number(western[1]);
+  /* 文中からシーン名を拾う。正式名・部分名・言い換えの順に照合する */
+  function extractScene(text) {
+    const scenes = window.Album.getScenes();
 
-    const eras = [
-      { pattern: /令和\s*(元|\d{1,2})\s*年?/, base: 2018 },
-      { pattern: /平成\s*(元|\d{1,2})\s*年?/, base: 1988 },
-      { pattern: /昭和\s*(元|\d{1,2})\s*年?/, base: 1925 },
-    ];
+    const exact = scenes.find((s) => text.includes(s));
+    if (exact) return exact;
 
-    for (const era of eras) {
-      const matched = text.match(era.pattern);
-      if (matched) {
-        const nth = matched[1] === '元' ? 1 : Number(matched[1]);
-        return era.base + nth;
+    /* 「スピーチ・挨拶」に対する「スピーチ」のような部分一致 */
+    for (const scene of scenes) {
+      for (const part of scene.split('・')) {
+        if (part.length >= 2 && text.includes(part)) return scene;
       }
+    }
+
+    /* 言い換え。ただしアルバムに実在するシーンに限る */
+    for (const scene of scenes) {
+      const words = SCENE_ALIASES[scene] || [];
+      if (words.some((w) => text.includes(w))) return scene;
     }
     return null;
   }
 
-  /* 大分類（学生時代 / OB/OG会 / その他）を聞き取る */
-  const CATEGORY_PATTERNS = [
-    { pattern: /学生時代|学生の頃|学生のころ|現役時代|現役の頃/, value: '学生時代' },
-    { pattern: /OB\s*[\/・]?\s*OG\s*会|OBOG会|OB会|OG会/i, value: 'OB/OG会' },
-    { pattern: /その他/, value: 'その他' },
-  ];
-
-  function extractCategory(text) {
-    const hit = CATEGORY_PATTERNS.find((c) => c.pattern.test(text));
-    return hit ? hit.value : null;
-  }
-
   /* 検索対象となるキーワードを取り出す。助詞や定型句は落とす */
   function extractKeywords(text) {
-    /* 年は extractYear が別途拾うので、キーワードからは取り除く。
-       残しておくと「2019年の写真」が「2019年 の 2019」のような表示になってしまう */
-    /* 直後の「の」も一緒に取り除く。残すと「学生時代のドラマ」が
-       「のドラマ」という検索語になってしまう */
-    let base = text
-      .replace(/(19\d{2}|20\d{2})\s*年?の?/g, ' ')
-      .replace(/(令和|平成|昭和)\s*(元|\d{1,2})\s*年?の?/g, ' ');
-
-    /* 大分類も extractCategory が別途拾うので、キーワードからは取り除く */
-    CATEGORY_PATTERNS.forEach((c) => {
-      base = base.replace(new RegExp(c.pattern.source + 'の?', c.pattern.flags), ' ');
-    });
-
     const noise = [
       'の写真', '写真', 'を', 'が', 'は', 'に', 'で', 'と', 'も', 'から', 'まで',
       '見せて', 'みせて', '見たい', 'みたい', '見る', '表示', '探して', 'さがして',
       '検索', 'ある', 'ありますか', 'ください', 'ちょうだい', 'お願い', 'おねがい',
-      'って', 'どんな', 'なに', '何', 'とき', '時', '年', 'ころ', '頃', 'あたり',
-      '教えて', 'おしえて', 'です', 'ますか', 'かな', 'たい',
+      'って', 'どんな', 'なに', '何', 'とき', '時', 'ころ', '頃', 'あたり',
+      '教えて', 'おしえて', 'です', 'ますか', 'かな', 'たい', 'シーン', '場面',
     ];
 
+    let base = text;
     noise.forEach((word) => { base = base.split(word).join(' '); });
 
     return base
       .replace(/[。、．，！？!?~〜「」（）()]/g, ' ')
       .split(/[\s　]+/)
-      /* 2文字以上を残す。ただし「海」「山」「桜」のように1文字でも意味を持つ
-         漢字・カタカナ・英数は残す（ひらがな1文字は助詞の可能性が高いので落とす） */
+      /* 2文字以上を残す。ただし1文字でも意味を持つ漢字・カタカナ・英数は残す
+         （ひらがな1文字は助詞の可能性が高いので落とす） */
       .filter((word) => word.length >= 2 || /[^ぁ-ゖ]/.test(word))
       .join(' ')
       .trim();
@@ -163,13 +149,25 @@
     if (!text) return;
 
     const photos = window.Album.getPhotos();
-    const { categories, years, events } = window.Album.getFacets();
+    const scenes = window.Album.getScenes();
+    const isAdmin = window.Album.getRole() === 'admin';
+
+    /* --- 写真が1枚も無いとき --- */
+    if (photos.length === 0 && !has(text, ['使い方', 'ヘルプ', '追加', 'アップロード'])) {
+      botSay(
+        'まだ写真が1枚も登録されていません。\n' +
+        '8月29日のOB/OG会が終わったら、幹事が写真をアップロードします。もう少しお待ちください。',
+        [],
+        isAdmin ? ['写真を追加したい', '使い方'] : ['使い方']
+      );
+      return;
+    }
 
     /* --- 挨拶 --- */
     if (has(text, ['こんにちは', 'こんばんは', 'おはよう', 'はじめまして', 'よろしく'])) {
       botSay(
-        'こんにちは！ OB会の思い出アルバム係です。\n' +
-        '「2019年の写真を見せて」「合宿の写真ある？」のように話しかけてください。',
+        'こんにちは！ 8月29日のOB/OG会アルバム係です。\n' +
+        '「集合写真を見せて」「二次会の写真ある？」のように話しかけてください。',
         [],
         defaultQuickReplies()
       );
@@ -179,61 +177,68 @@
     /* --- 使い方 --- */
     if (has(text, ['使い方', 'ヘルプ', 'help', 'できること', '何ができ', 'なにができ'])) {
       botSay(
-        'できることは次のとおりです。\n\n' +
-        '【写真を出す】\n' +
-        '・「学生時代のドラマ」…大分類とイベントで絞り込み\n' +
-        '・「2023年のOB会」…大分類と年で絞り込み\n' +
-        '・「2019年の写真」…年で絞り込み\n' +
-        '・「花見の写真ある？」…イベント名やタグで検索\n' +
-        '・「最近の写真」「ランダムで見せて」\n' +
-        '・写真をタップすると拡大表示され、そこからダウンロードできます\n\n' +
-        '【写真を入れる】\n' +
-        '・「写真を追加したい」…アップロード画面を開きます\n' +
-        '　（管理用の合言葉でログインしている場合のみ）\n\n' +
+        'このアルバムは、2026年8月29日のOB/OG会の写真をまとめたものです。\n\n' +
+        '【写真を探す】\n' +
+        '・「集合写真」「二次会」など場面で絞り込み\n' +
+        '・「乾杯」などキーワードでも検索できます\n' +
+        '・「最初の方」「最後の方」で時間帯を指定\n' +
+        '・「ランダムで見せて」でおまかせ表示\n\n' +
+        '【写真を保存する】\n' +
+        '・写真をタップ →「ダウンロード」で元の画質で保存\n\n' +
+        (isAdmin
+          ? '【幹事の方】\n' +
+            '・「写真を追加したい」でアップロード画面を開きます\n' +
+            '・写真をタップ →「情報を修正」でシーンや説明を直せます\n\n'
+          : '') +
         '【そのほか】\n' +
-        '・「何枚ある？」…登録枚数を確認\n' +
-        '・「イベント一覧」…登録されているイベントを表示',
+        '・「何枚ある？」…シーン別の枚数\n' +
+        '・「シーン一覧」…どんな場面の写真があるか',
         [],
         defaultQuickReplies()
       );
       return;
     }
 
-    /* --- 写真を入れる（アップロード） --- */
-    if (has(text, ['アップロード', 'あっぷろーど', '追加', '入れ', 'いれ', '登録', '保存したい', 'あげたい', '上げたい', '投稿'])) {
-      if (window.Album.getRole() !== 'admin') {
+    /* --- 写真を追加（幹事のみ） --- */
+    if (has(text, ['アップロード', 'あっぷろーど', '追加', '入れ', 'いれ', '登録', 'あげたい', '上げたい', '投稿'])) {
+      if (!isAdmin) {
         botSay(
-          '写真の追加には「管理用の合言葉」が必要です。\n' +
-          '幹事の方から管理用の合言葉を受け取って、いったんログアウトしてから入り直してください。'
+          '写真の追加は幹事が行います。\n' +
+          'お手元に当日の写真がある場合は、幹事にお送りいただければアルバムに追加します。'
         );
         return;
       }
-      const opened = window.Album.openUpload();
-      if (opened) {
+      if (window.Album.openUpload()) {
         botSay(
           'アップロード画面を開きました。\n' +
-          '写真を選んで、撮影年・イベント名・タグを入れておくと、あとから探しやすくなります。\n' +
-          '（アップロード時に自動で縮小するので、枚数が多くても大丈夫です）'
+          'シーンを選んでからアップロードすると、あとで探しやすくなります。\n' +
+          '同じシーンの写真をまとめて選ぶのがおすすめです。'
         );
       }
+      return;
+    }
+
+    /* --- 情報の修正（幹事のみ） --- */
+    if (has(text, ['修正', '直し', '直す', '変更', '付け直', 'つけ直', '編集'])) {
+      botSay(isAdmin
+        ? '直したい写真をタップして拡大表示し、「情報を修正」を押してください。\nシーン・タグ・説明を後からいつでも変更できます。'
+        : '写真の情報の修正は幹事のみが行えます。お気づきの点は幹事までお知らせください。');
       return;
     }
 
     /* --- 削除の案内 --- */
     if (has(text, ['削除', '消し', '消す', '取り消'])) {
-      if (window.Album.getRole() !== 'admin') {
-        botSay('写真の削除には「管理用の合言葉」が必要です。幹事の方にご相談ください。');
-      } else {
-        botSay('削除したい写真をタップして拡大表示し、「削除」ボタンを押してください。\n削除すると元に戻せないのでご注意ください。');
-      }
+      botSay(isAdmin
+        ? '削除したい写真をタップして拡大表示し、「削除」を押してください。\n削除すると元に戻せないのでご注意ください。'
+        : '写真の削除は幹事のみが行えます。掲載を控えてほしい写真があれば、幹事までお知らせください。');
       return;
     }
 
     /* --- ダウンロードの案内 --- */
-    if (has(text, ['ダウンロード', 'だうんろーど', '出し', 'だし', '取り出', '持ち帰', '保存'])) {
+    if (has(text, ['ダウンロード', 'だうんろーど', '保存', '持ち帰', '取り出'])) {
       botSay(
-        '写真をタップして拡大表示すると、「ダウンロード」ボタンから元の画質で保存できます。\n' +
-        'まず探したい写真の条件を教えてください。（例：「2019年の合宿」）',
+        '写真をタップして拡大表示すると、「ダウンロード」から元の画質で保存できます。\n' +
+        'まず見たい写真の場面を教えてください。',
         [],
         defaultQuickReplies()
       );
@@ -242,31 +247,23 @@
 
     /* --- 枚数・統計 --- */
     if (has(text, ['何枚', 'なんまい', '枚数', 'いくつ', '合計', '全部で'])) {
-      if (photos.length === 0) {
-        botSay('まだ写真が1枚も登録されていません。');
-        return;
-      }
-      const yearSummary = years
-        .map((year) => `・${year}年：${photos.filter((p) => p.year === year).length} 枚`)
+      const summary = scenes
+        .map((s) => `・${s}：${photos.filter((p) => p.scene === s).length} 枚`)
         .join('\n');
       botSay(
-        `現在 ${photos.length} 枚の写真が登録されています。\n\n【年別】\n${yearSummary || '（年の情報が未設定の写真のみです）'}`,
+        `8月29日のOB/OG会の写真は、全部で ${photos.length} 枚です。\n\n【シーン別】\n${summary}`,
         [],
         defaultQuickReplies()
       );
       return;
     }
 
-    /* --- イベント一覧 --- */
-    if (has(text, ['イベント一覧', 'イベント', '行事', '一覧', 'どんな写真', '何がある'])) {
-      if (events.length === 0) {
-        botSay('まだイベント名が登録された写真がありません。');
-        return;
-      }
-      const list = events
-        .map((event) => `・${event}（${photos.filter((p) => p.event === event).length} 枚）`)
+    /* --- シーン一覧 --- */
+    if (has(text, ['シーン一覧', '一覧', 'どんな写真', '何がある', 'どんな場面'])) {
+      const list = scenes
+        .map((s) => `・${s}（${photos.filter((p) => p.scene === s).length} 枚）`)
         .join('\n');
-      botSay(`登録されているイベントはこちらです。\n\n${list}\n\n見たいイベント名を教えてください。`, [], events.slice(0, 6));
+      botSay(`こんな場面の写真があります。\n\n${list}\n\n見たい場面を教えてください。`, [], scenes.slice(0, 6));
       return;
     }
 
@@ -277,130 +274,70 @@
       return;
     }
 
-    /* --- 最近の写真 --- */
-    if (has(text, ['最近', '新しい', '最新', '直近'])) {
+    /* --- 時間帯（1日のイベントなので、序盤・終盤の指定が効く） --- */
+    if (has(text, ['最初', '序盤', '前半', 'はじめの方', '始めの方'])) {
       const result = window.Album.setFilter({});
-      botSay(
-        result.length > 0
-          ? `新しい順に並べています。上位 ${Math.min(THUMB_LIMIT, result.length)} 枚はこちらです。`
-          : 'まだ写真が登録されていません。',
-        result
-      );
+      botSay('会の序盤の写真です（撮影時刻の早い順に並んでいます）。',
+        result.slice(0, THUMB_LIMIT), defaultQuickReplies());
+      return;
+    }
+    if (has(text, ['最後', '終盤', '後半', '終わり', 'ラスト'])) {
+      const result = window.Album.setFilter({});
+      botSay('会の終盤の写真です。',
+        result.slice(-THUMB_LIMIT).reverse(), defaultQuickReplies());
       return;
     }
 
     /* --- ランダム表示 --- */
     if (has(text, ['ランダム', 'おすすめ', '適当', 'なんでも', 'おまかせ'])) {
-      if (photos.length === 0) {
-        botSay('まだ写真が登録されていません。');
-        return;
-      }
       const picked = [...photos].sort(() => Math.random() - 0.5).slice(0, THUMB_LIMIT);
       botSay('こんな写真はいかがですか？ タップすると大きく表示されます。', picked, defaultQuickReplies());
       return;
     }
 
-    /* --- 大分類・年・キーワードによる検索（ここが主要機能） --- */
-    const category = extractCategory(text);
-    const year = extractYear(text);
+    /* --- シーン・キーワードによる検索（主要機能） --- */
+    const scene = extractScene(text);
     const keywords = extractKeywords(text);
 
-    /* どの条件も取れない場合は聞き返す */
-    if (!category && !year && !keywords) {
+    if (!scene && !keywords) {
       botSay(
         'すみません、うまく聞き取れませんでした。\n' +
-        '「学生時代のドラマ」「2023年のOB会」のように、大分類・年・イベント名を入れて教えてください。',
+        '「集合写真」「二次会」のような場面や、「乾杯」などのキーワードで教えてください。',
         [],
         defaultQuickReplies()
       );
       return;
     }
 
-    /* イベント名と完全に一致する語があれば、イベント絞り込みとして扱う */
-    const matchedEvent = events.find((event) => text.includes(event));
+    /* シーンが特定できた場合、キーワードはシーン名の一部である可能性が高いので使わない */
+    const result = window.Album.setFilter(scene ? { scene } : { query: keywords });
 
-    const filter = {};
-    if (category) filter.category = category;
-    if (year) filter.year = year;
-    if (matchedEvent) {
-      filter.event = matchedEvent;
-    } else if (keywords) {
-      filter.query = keywords;
-    }
-
-    /* 条件を人が読める形にする（「学生時代 の 2019年 の ドラマ」など）。
-       大分類とイベント名が同じ場合は重ねて表示しない */
-    const describe = (f) => {
-      const parts = [
-        f.category || '',
-        f.year ? `${f.year}年` : '',
-        f.event || f.query || '',
-      ].filter(Boolean);
-      return [...new Set(parts)].join(' の ');
-    };
-
-    const conditionLabel = describe(filter);
-    let result = window.Album.setFilter(filter);
-
-    /* 見つからなかった場合は、条件を緩めて再検索し、代わりの候補を提案する */
     if (result.length === 0) {
-      /* 絞り込みの強い順（イベント/キーワード → 年 → 大分類）に条件を落としていく */
-      const relaxed = { ...filter };
-      delete relaxed.event;
-      delete relaxed.query;
-
-      let fallback = Object.keys(relaxed).length > 0 ? window.Album.setFilter(relaxed) : [];
-
-      if (fallback.length === 0 && category) {
-        Object.keys(relaxed).forEach((k) => { if (k !== 'category') delete relaxed[k]; });
-        fallback = window.Album.setFilter(relaxed);
-      }
-
-      if (fallback.length > 0) {
-        botSay(
-          `「${conditionLabel}」に一致する写真は見つかりませんでした。\n` +
-          `代わりに「${describe(relaxed)}」で ${fallback.length} 枚が見つかったので表示しています。`,
-          fallback,
-          defaultQuickReplies()
-        );
-      } else {
-        /* 該当が無いときは絞り込みを解除し、その旨も伝える */
-        window.Album.setFilter({});
-        botSay(
-          `「${conditionLabel}」の写真は見つかりませんでした。\n` +
-          (categories.length > 0 ? `大分類：${categories.join(' / ')}\n` : '') +
-          (years.length > 0 ? `登録があるのは ${years.join('年 / ')}年 です。` : '') +
-          (events.length > 0 ? `\nイベント：${events.slice(0, 8).join(' / ')}` : '') +
-          '\n\n（ギャラリーは全件表示に戻しました）',
-          [],
-          defaultQuickReplies()
-        );
-      }
+      window.Album.setFilter({});
+      botSay(
+        `「${scene || keywords}」の写真は見つかりませんでした。\n` +
+        `登録があるのは次の場面です。\n${scenes.map((s) => `・${s}`).join('\n')}\n\n` +
+        '（ギャラリーは全件表示に戻しました）',
+        [],
+        defaultQuickReplies()
+      );
       return;
     }
 
     botSay(
-      `「${conditionLabel}」の写真を ${result.length} 枚見つけました。` +
-      (result.length > THUMB_LIMIT
-        ? `\n下のギャラリーに全 ${result.length} 枚を表示しています。`
-        : ''),
+      `「${scene || keywords}」の写真を ${result.length} 枚見つけました。` +
+      (result.length > THUMB_LIMIT ? `\n下のギャラリーに全 ${result.length} 枚を表示しています。` : ''),
       result,
-      ['ダウンロードしたい', 'すべて表示', '使い方']
+      ['すべて表示', '何枚ある？', '使い方']
     );
   }
 
   /* 状況に応じたクイック返信を組み立てる */
   function defaultQuickReplies() {
-    const { categories, years, events } = window.Album.getFacets();
-    const replies = [];
-
-    categories.slice(0, 2).forEach((c) => replies.push(c));
-    if (years.length > 0) replies.push(`${years[0]}年の写真`);
-    if (events.length > 0) replies.push(events[0]);
+    const replies = window.Album.getScenes().slice(0, 3);
     replies.push('何枚ある？');
     if (window.Album.getRole() === 'admin') replies.push('写真を追加したい');
     replies.push('使い方');
-
     return replies;
   }
 
@@ -434,11 +371,10 @@
       const total = window.Album.getPhotos().length;
       addMessage(
         'bot',
-        'こんにちは！ 思い出アルバム係です。\n' +
+        'こんにちは！ 8月29日のOB/OG会アルバム係です。\n' +
         (total > 0
-          ? `現在 ${total} 枚の写真をお預かりしています。`
-          : 'まだ写真が登録されていません。') +
-        '\n見たい写真の年やイベント名を教えてください。'
+          ? `当日の写真を ${total} 枚お預かりしています。\n見たい場面やキーワードを教えてください。`
+          : 'まだ写真が登録されていません。会が終わったら幹事がアップロードします。')
       );
       setQuickReplies(defaultQuickReplies());
     }
