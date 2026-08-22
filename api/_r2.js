@@ -214,13 +214,17 @@ export async function readManifest() {
   const res = await r2Fetch('GET', MANIFEST_KEY);
 
   /* 初回起動時はまだファイルが無いので空の一覧を返す */
-  if (res.status === 404) return { photos: [] };
+  if (res.status === 404) return { photos: [], videos: [] };
   if (!res.ok) {
     throw new Error(`写真一覧の読み込みに失敗しました（R2 応答: ${res.status}）`);
   }
 
   const data = await res.json();
-  return { photos: Array.isArray(data.photos) ? data.photos : [] };
+  return {
+    photos: Array.isArray(data.photos) ? data.photos : [],
+    /* 動画は YouTube のリンクだけを持つ（実体は R2 に置かない） */
+    videos: Array.isArray(data.videos) ? data.videos : [],
+  };
 }
 
 export async function writeManifest(manifest) {

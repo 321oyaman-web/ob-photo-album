@@ -27,6 +27,7 @@
     token: '',
     role: '',
     photos: [],                                  // サーバーから取得した全写真
+    videos: [],                                  // YouTube 限定公開へのリンク
     visible: [],                                 // 絞り込み後に表示している写真
     filter: { scene: null, query: '' },
     editingId: null,
@@ -65,6 +66,14 @@
     fileInput: $('file-input'),
     pickedInfo: $('picked-info'),
     metaScene: $('meta-scene'),
+    videoOpenBtn: $('video-open-btn'),
+    videoSection: $('video-section'),
+    videoList: $('video-list'),
+    videoModal: $('video-modal'),
+    videoUrl: $('video-url'),
+    videoName: $('video-name'),
+    videoNote: $('video-note'),
+    videoSaveBtn: $('video-save-btn'),
     editModal: $('edit-modal'),
     editTarget: $('edit-target'),
     editScene: $('edit-scene'),
@@ -159,6 +168,8 @@
     state.token = '';
     state.role = '';
     state.photos = [];
+    state.videos = [];
+    el.videoSection.hidden = true;
     el.app.hidden = true;
     el.loginScreen.hidden = false;
     el.password.value = '';
@@ -171,7 +182,8 @@
     el.loginScreen.hidden = true;
     el.app.hidden = false;
     el.uploadOpenBtn.hidden = state.role !== 'admin';
-    await loadPhotos();
+    el.videoOpenBtn.hidden = state.role !== 'admin';
+    await Promise.all([loadPhotos(), loadVideos()]);
     document.dispatchEvent(new CustomEvent('album:ready'));
   }
 
@@ -199,8 +211,150 @@
   function updateHeaderCount() {
     const total = state.photos.length;
     const roleLabel = state.role === 'admin' ? '管理モード' : '閲覧モード';
-    el.headerCount.textContent = `全 ${total} 枚 ・ ${roleLabel}`;
+    const videoPart = state.videos.length > 0 ? ` ・ 動画 ${state.videos.length} 本` : '';
+    el.headerCount.textContent = `全 ${total} 枚${videoPart} ・ ${roleLabel}`;
   }
+
+  /* ----------------------------------------
+     動画（YouTube 限定公開へのリンク）
+  ---------------------------------------- */
+  async function loadVideos() {
+    try {
+      const data = await api('/api/videos');
+      state.videos = data.videos;
+      renderVideos();
+      updateHeaderCount();
+    } catch (err) {
+      /* 動画は補助的な機能なので、失敗しても写真の表示は妨げない */
+      console.error('[videos]', err);
+    }
+  }
+
+  function renderVideos() {
+    el.videoList.innerHTML = '';
+    /* 1本も無いときは、閲覧者には見出しごと隠す */
+    el.videoSection.hidden = state.videos.length === 0;
+    if (el.videoSection.hidden) return;
+
+    state.videos.forEach((video) => {
+      const card = document.createElement('a');
+      card.className = 'vcard';
+      card.href = video.watchUrl;
+      card.target = '_blank';
+      card.rel = 'noopener noreferrer';
+
+      const thumb = document.createElement('div');
+      thumb.className = 'vcard__thumb';
+
+      const img = document.createElement('img');
+      img.src = video.thumbUrl;
+      img.alt = '';
+      img.loading = 'lazy';
+      /* YouTube 側のサムネイルが取れない場合は枠だけ残す */
+      img.addEventListener('error', () => { img.remove(); });
+      thumb.appendChild(img);
+
+      const play = document.createElement('span');
+      play.className = 'vcard__play';
+      play.setAttribute('aria-hidden', 'true');
+      play.innerHTML = '<svg viewBox="0 0 24 24" width="26" height="26">' +
+        '<circle cx="12" cy="12" r="11" fill="rgba(0,0,0,.5)"/>' +
+        '<path d="M10 8l6 4-6 4Z" fill="#fff"/></svg>';
+      thumb.appendChild(play);
+      card.appendChild(thumb);
+
+      const body = document.createElement('div');
+      body.className = 'vcard__body';
+
+      const name = document.createElement('p');
+      name.className = 'vcard__name';
+      name.textContent = video.title;
+      body.appendChild(name);
+
+      if (video.note) {
+        const note = document.createElement('p');
+        note.className = 'vcard__note';
+        note.textContent = video.note;
+        body.appendChild(note);
+      }
+      card.appendChild(body);
+
+      if (state.role === 'admin') {
+        const del = document.createElement('button');
+        del.className = 'vcard__del';
+        del.type = 'button';
+        del.textContent = '×';
+        del.title = 'この動画リンクを削除';
+        del.setAttribute('aria-label', `${video.title} のリンクを削除`);
+        del.addEventListener('click', async (e) => {
+          /* カード全体がリンクなので、YouTube を開かないよう止める */
+          e.preventDefault();
+          e.stopPropagation();
+          if (!confirm(`「${video.title}」のリンクを削除します。よろしいですか？\n\n（YouTube 上の動画は消えません）`)) return;
+          try {
+            await api('/api/videos', { method: 'DELETE', body: JSON.stringify({ id: video.id }) });
+            toast('動画リンクを削除しました');
+            await loadVideos();
+          } catch (err) {
+            toast(err.message, true);
+          }
+        });
+        card.appendChild(del);
+      }
+
+      el.videoList.appendChild(card);
+    });
+  }
+
+  function openVideoModal() {
+    if (state.role !== 'admin') {
+      toast('動画の登録には管理用の合言葉が必要です', true);
+      return false;
+    }
+    el.videoUrl.value = '';
+    el.videoName.value = '';
+    el.videoNote.value = '';
+    el.videoModal.hidden = false;
+    setTimeout(() => el.videoUrl.focus(), 60);
+    return true;
+  }
+
+  function closeVideoModal() {
+    el.videoModal.hidden = true;
+  }
+
+  el.videoOpenBtn.addEventListener('click', openVideoModal);
+
+  document.querySelectorAll('[data-close-video]').forEach((node) => {
+    node.addEventListener('click', closeVideoModal);
+  });
+
+  el.videoSaveBtn.addEventListener('click', async () => {
+    const url = el.videoUrl.value.trim();
+    if (!url) {
+      toast('YouTube のURLを入力してください', true);
+      return;
+    }
+
+    el.videoSaveBtn.disabled = true;
+    try {
+      await api('/api/videos', {
+        method: 'POST',
+        body: JSON.stringify({
+          url,
+          title: el.videoName.value.trim(),
+          note: el.videoNote.value.trim(),
+        }),
+      });
+      closeVideoModal();
+      toast('動画リンクを登録しました');
+      await loadVideos();
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      el.videoSaveBtn.disabled = false;
+    }
+  });
 
   /* 実際に写真があるシーンだけを、SCENES の並び順で返す */
   function getScenes() {
@@ -725,6 +879,7 @@
   window.Album = {
     getRole: () => state.role,
     getPhotos: () => state.photos,
+    getVideos: () => state.videos,
     getVisible: () => state.visible,
     getFacets,
     getScenes,
@@ -751,6 +906,7 @@
     },
 
     openUpload,
+    openVideoModal,
     downloadPhoto,
     reload: loadPhotos,
   };

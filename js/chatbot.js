@@ -152,6 +152,43 @@
     const scenes = window.Album.getScenes();
     const isAdmin = window.Album.getRole() === 'admin';
 
+    /* --- 動画（YouTube 限定公開へのリンク） --- */
+    if (has(text, ['動画', 'ビデオ', 'ムービー', 'youtube', 'YouTube'])) {
+      const videos = window.Album.getVideos();
+
+      if (has(text, ['追加', '登録', '入れ', 'あげたい', '上げたい'])) {
+        if (!isAdmin) {
+          botSay('動画の登録は幹事が行います。撮影された動画がある場合は幹事にご連絡ください。');
+        } else if (window.Album.openVideoModal()) {
+          botSay(
+            '動画の登録画面を開きました。\n' +
+            'まず YouTube に「限定公開」でアップロードし、そのURLを貼り付けてください。\n' +
+            '限定公開なら検索には出ず、リンクを知っている方だけが視聴できます。'
+          );
+        }
+        return;
+      }
+
+      if (videos.length === 0) {
+        botSay(
+          'まだ動画は登録されていません。\n' +
+          '動画は YouTube の限定公開に置いて、このアルバムからリンクする形にしています。',
+          [],
+          defaultQuickReplies()
+        );
+        return;
+      }
+
+      botSay(
+        `動画が ${videos.length} 本あります。\n\n` +
+        videos.map((v) => `・${v.title}${v.note ? `（${v.note}）` : ''}`).join('\n') +
+        '\n\nページ上部の「動画」からタップすると YouTube で再生できます。',
+        [],
+        defaultQuickReplies()
+      );
+      return;
+    }
+
     /* --- 写真が1枚も無いとき --- */
     if (photos.length === 0 && !has(text, ['使い方', 'ヘルプ', '追加', 'アップロード'])) {
       botSay(
@@ -185,9 +222,13 @@
         '・「ランダムで見せて」でおまかせ表示\n\n' +
         '【写真を保存する】\n' +
         '・写真をタップ →「ダウンロード」で元の画質で保存\n\n' +
+        '【動画】\n' +
+        '・「動画」と聞くと、登録されている動画の一覧をお伝えします\n' +
+        '・動画は YouTube の限定公開に置いてあります\n\n' +
         (isAdmin
           ? '【幹事の方】\n' +
             '・「写真を追加したい」でアップロード画面を開きます\n' +
+            '・「動画を追加したい」で動画リンクを登録します\n' +
             '・写真をタップ →「情報を修正」でシーンや説明を直せます\n\n'
           : '') +
         '【そのほか】\n' +
