@@ -1,4 +1,4 @@
-# Vercel デプロイ除外設定
+﻿# Vercel デプロイ除外設定
 
 # Claude Code 設定
 .claude/
@@ -17,3 +17,6 @@ _drafts/
 
 # ドキュメント（公開不要）
 README.md
+
+# テスト
+tests/

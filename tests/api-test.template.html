@@ -1,0 +1,527 @@
+﻿<!DOCTYPE html>
+<html lang="ja">
+<head><meta charset="UTF-8"><title>API 統合テスト</title>
+<style>body{font-family:monospace;padding:20px;line-height:1.65}pre{white-space:pre-wrap}
+.ok{color:#0a7d28;font-weight:bold}.ng{color:#c0392b;font-weight:bold}h2{font-size:15px;margin:18px 0 6px}</style></head>
+<body>
+<h1>api/ ハンドラー統合テスト</h1>
+<p>実ファイルを ES モジュールとして読み込み、R2 をメモリ上に模したうえで全エンドポイントを通す。</p>
+<pre id="out">実行中…</pre>
+
+<script src="API_SOURCES_PLACEHOLDER"></script>
+<script>
+/* ============================================================
+   Node の組み込みを最小限だけ模す。
+   ※ ハッシュは「決定的であること」だけが要件（同じ入力→同じ出力）。
+     署名の暗号学的な正しさは sigv4-test.html で AWS 公式ベクトルと照合済み。
+============================================================ */
+const lines = []; const log = (s) => lines.push(s);
+let pass = 0, fail = 0;
+function check(name, actual, expected) {
+  const a = JSON.stringify(actual), e = JSON.stringify(expected);
+  const ok = a === e; ok ? pass++ : fail++;
+  log(`${ok ? '<span class="ok">[PASS]</span>' : '<span class="ng">[FAIL]</span>'} ${name}`);
+  if (!ok) { log(`         期待値: ${e}`); log(`         実際値: ${a}`); }
+}
+
+/* --- バイト列ユーティリティ --- */
+const te = new TextEncoder();
+function toBytes(x) {
+  if (x == null) return new Uint8Array(0);
+  if (x instanceof Uint8Array) return x;
+  if (Array.isArray(x)) return new Uint8Array(x);
+  return te.encode(String(x));
+}
+function mkBuf(bytes) {
+  const u = new Uint8Array(bytes);
+  u.toString = function (enc) {
+    return enc === 'hex'
+      ? [...this].map((b) => b.toString(16).padStart(2, '0')).join('')
+      : new TextDecoder().decode(this);
+  };
+  return u;
+}
+/* 決定的な擬似ハッシュ（FNV-1a を4系統回して32バイト分作る） */
+function fakeDigest(bytes) {
+  const out = new Uint8Array(32);
+  for (let lane = 0; lane < 8; lane++) {
+    let h = 0x811c9dc5 ^ (lane * 0x9e3779b1);
+    for (let i = 0; i < bytes.length; i++) {
+      h ^= bytes[i]; h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    out[lane * 4] = h & 255; out[lane * 4 + 1] = (h >>> 8) & 255;
+    out[lane * 4 + 2] = (h >>> 16) & 255; out[lane * 4 + 3] = (h >>> 24) & 255;
+  }
+  return out;
+}
+function concat(list) {
+  const total = list.reduce((n, b) => n + b.length, 0);
+  const out = new Uint8Array(total); let o = 0;
+  list.forEach((b) => { out.set(b, o); o += b.length; });
+  return out;
+}
+
+globalThis.Buffer = { from: (x) => mkBuf(toBytes(x)) };
+
+const cryptoShim = {
+  createHash() {
+    const parts = [];
+    return { update(d) { parts.push(toBytes(d)); return this; },
+             digest(enc) { const b = mkBuf(fakeDigest(concat(parts))); return enc === 'hex' ? b.toString('hex') : b; } };
+  },
+  createHmac(alg, key) {
+    const parts = [toBytes(key), te.encode('|hmac|')];
+    return { update(d) { parts.push(toBytes(d)); return this; },
+             digest(enc) { const b = mkBuf(fakeDigest(concat(parts))); return enc === 'hex' ? b.toString('hex') : b; } };
+  },
+  timingSafeEqual(a, b) {
+    if (a.length !== b.length) throw new Error('length mismatch');
+    let d = 0; for (let i = 0; i < a.length; i++) d |= a[i] ^ b[i];
+    return d === 0;
+  },
+  randomUUID: () => crypto.randomUUID(),
+};
+
+/* --- 環境変数 --- */
+globalThis.process = { env: {
+  /* アカウントIDは32桁の英数字である必要があるため、テストでも同じ形式にする */
+  R2_ACCOUNT_ID: 'abcdef0123456789abcdef0123456789',
+  R2_ACCESS_KEY_ID: 'AK123', R2_SECRET_ACCESS_KEY: 'SK123',
+  R2_BUCKET: 'ob-photo-album',
+  ALBUM_PASSWORD: 'view-pw', ADMIN_PASSWORD: 'admin-pw', SESSION_SECRET: 'test-secret-32-chars-long-xxxxxx',
+} };
+
+/* --- R2 をメモリ上に模す --- */
+const store = new Map();
+const r2Calls = [];
+globalThis.fetch = async (url, opts = {}) => {
+  const u = new URL(url);
+  const key = decodeURIComponent(u.pathname.replace('/ob-photo-album/', ''));
+  const method = (opts.method || 'GET').toUpperCase();
+  r2Calls.push(`${method} ${key}`);
+  const resp = (status, text) => ({ ok: status < 400, status,
+    json: async () => JSON.parse(text), text: async () => text });
+
+  if (method === 'PUT') { store.set(key, opts.body); return resp(200, ''); }
+  if (method === 'GET') { return store.has(key) ? resp(200, store.get(key)) : resp(404, ''); }
+  if (method === 'DELETE') { store.delete(key); return resp(204, ''); }
+  return resp(400, '');
+};
+
+/* --- req / res を模す --- */
+function mockRes() {
+  const r = { statusCode: 0, body: null, headers: {} };
+  r.status = (c) => { r.statusCode = c; return r; };
+  r.json = (b) => { r.body = b; return r; };
+  r.setHeader = (k, v) => { r.headers[k] = v; return r; };
+  return r;
+}
+const mockReq = (o = {}) => ({ method: 'GET', headers: {}, query: {}, body: null, ...o });
+const auth = (t) => ({ authorization: `Bearer ${t}` });
+
+/* ============================================================
+   実ファイルを blob モジュールとして読み込む
+============================================================ */
+async function loadModules() {
+  const raw = window.API_SOURCES;
+  /* PowerShell 5.1 の ConvertTo-Json は文字列を {value:...} で包むことがあるため吸収する */
+  const src = {};
+  for (const k of Object.keys(raw)) src[k] = typeof raw[k] === 'string' ? raw[k] : raw[k].value;
+
+  const blob = (code) => URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
+
+  /* node:crypto の代わりに使うシムモジュール */
+  window.__cryptoShim = cryptoShim;
+  const cryptoUrl = blob('export default window.__cryptoShim;');
+
+  const r2Url = blob(src['_r2.js'].replace(/'node:crypto'/g, `'${cryptoUrl}'`));
+  const authUrl = blob(src['_auth.js'].replace(/'node:crypto'/g, `'${cryptoUrl}'`));
+  const scenesUrl = blob(src['_scenes.js']);
+
+  const fix = (code) => code
+    .replace(/'node:crypto'/g, `'${cryptoUrl}'`)
+    .replace(/'\.\/_r2\.js'/g, `'${r2Url}'`)
+    .replace(/'\.\/_auth\.js'/g, `'${authUrl}'`)
+    .replace(/'\.\/_scenes\.js'/g, `'${scenesUrl}'`);
+
+  const mods = {};
+  for (const name of ['login.js', 'photos.js', 'upload-url.js', 'register.js', 'update.js',
+                      'delete.js', 'health.js', 'videos.js']) {
+    const mod = await import(blob(fix(src[name])));
+    mods[name] = mod.default;
+    if (name === 'videos.js') mods._videosMod = mod;
+  }
+  mods._r2 = await import(r2Url);
+  mods._auth = await import(authUrl);
+  mods._scenes = await import(scenesUrl);
+  return mods;
+}
+
+(async () => {
+  let m;
+  try { m = await loadModules(); }
+  catch (e) {
+    document.getElementById('out').innerHTML =
+      `<span class="ng">モジュールの読み込みに失敗: ${String(e).replace(/</g,'&lt;')}</span>`;
+    console.log('API_TEST_RESULT: LOAD_FAIL'); return;
+  }
+  log('<span class="ok">全モジュールの読み込みに成功（構文・export とも正常）</span>');
+
+  const call = async (h, req) => { const res = mockRes(); await h(req, res); return res; };
+
+  /* ---------- ログイン ---------- */
+  log('\n<h2>■ /api/login</h2>');
+  let r = await call(m['login.js'], mockReq({ method: 'GET' }));
+  check('GET は 405 を返す', r.statusCode, 405);
+
+  r = await call(m['login.js'], mockReq({ method: 'POST', body: {} }));
+  check('合言葉なしは 400', r.statusCode, 400);
+
+  r = await call(m['login.js'], mockReq({ method: 'POST', body: { password: 'wrong' } }));
+  check('誤った合言葉は 401', r.statusCode, 401);
+  check('エラーメッセージが日本語', r.body.error, '合言葉が違います');
+
+  r = await call(m['login.js'], mockReq({ method: 'POST', body: { password: 'view-pw' } }));
+  check('閲覧用の合言葉で viewer', [r.statusCode, r.body.role], [200, 'viewer']);
+  const viewerToken = r.body.token;
+
+  r = await call(m['login.js'], mockReq({ method: 'POST', body: { password: 'admin-pw' } }));
+  check('管理用の合言葉で admin', [r.statusCode, r.body.role], [200, 'admin']);
+  const adminToken = r.body.token;
+
+  /* body が文字列で来る場合（Vercel が自動パースしないケース） */
+  r = await call(m['login.js'], mockReq({ method: 'POST', body: JSON.stringify({ password: 'admin-pw' }) }));
+  check('body が文字列でも解釈できる', r.statusCode, 200);
+
+  /* --- 貼り付け時の空白混入（今回のログイン不能の再発防止） --- */
+  const savedAdmin = process.env.ADMIN_PASSWORD;
+  const savedAlbum = process.env.ALBUM_PASSWORD;
+
+  process.env.ADMIN_PASSWORD = '  admin-pw\n';   // 環境変数側に改行・空白が混入した想定
+  r = await call(m['login.js'], mockReq({ method: 'POST', body: { password: 'admin-pw' } }));
+  check('環境変数側に空白・改行があってもログインできる', [r.statusCode, r.body.role], [200, 'admin']);
+  process.env.ADMIN_PASSWORD = savedAdmin;
+
+  r = await call(m['login.js'], mockReq({ method: 'POST', body: { password: ' admin-pw ' } }));
+  check('入力側に前後の空白があってもログインできる', [r.statusCode, r.body.role], [200, 'admin']);
+
+  r = await call(m['login.js'], mockReq({ method: 'POST', body: { password: '   ' } }));
+  check('空白だけの入力は 400', r.statusCode, 400);
+
+  /* --- 設定漏れの切り分け --- */
+  delete process.env.ADMIN_PASSWORD;
+  r = await call(m['login.js'], mockReq({ method: 'POST', body: { password: 'admin-pw' } }));
+  check('ADMIN_PASSWORD 未設定なら未設定であることを伝える',
+    [r.statusCode, r.body.error.includes('ADMIN_PASSWORD）はサーバー側に未設定')], [401, true]);
+  r = await call(m['login.js'], mockReq({ method: 'POST', body: { password: 'view-pw' } }));
+  check('ADMIN_PASSWORD 未設定でも閲覧用は使える', [r.statusCode, r.body.role], [200, 'viewer']);
+
+  delete process.env.ALBUM_PASSWORD;
+  r = await call(m['login.js'], mockReq({ method: 'POST', body: { password: 'anything' } }));
+  check('両方未設定なら 500 で設定漏れを伝える',
+    [r.statusCode, r.body.error.includes('サーバー側に設定されていません')], [500, true]);
+
+  process.env.ADMIN_PASSWORD = savedAdmin;
+  process.env.ALBUM_PASSWORD = savedAlbum;
+  r = await call(m['login.js'], mockReq({ method: 'POST', body: { password: 'admin-pw' } }));
+  check('復旧後は通常どおりログインできる', [r.statusCode, r.body.role], [200, 'admin']);
+
+  /* ---------- トークン検証 ---------- */
+  log('\n<h2>■ トークン</h2>');
+  check('admin トークンを検証できる', m._auth.verifyToken(adminToken), 'admin');
+  check('viewer トークンを検証できる', m._auth.verifyToken(viewerToken), 'viewer');
+  check('改ざんトークンは無効', m._auth.verifyToken(adminToken.slice(0, -3) + 'aaa'), null);
+  check('role のすげ替えは無効', m._auth.verifyToken('admin.' + (Date.now() + 99999) + '.' + adminToken.split('.')[2]), null);
+  check('期限切れは無効', m._auth.verifyToken(m._auth.issueToken('admin').replace(/\.\d+\./, '.1000.')), null);
+  check('でたらめな文字列は無効', m._auth.verifyToken('aaa'), null);
+
+  /* ---------- 権限ガード ---------- */
+  log('\n<h2>■ 権限チェック</h2>');
+  r = await call(m['photos.js'], mockReq({ headers: {} }));
+  check('トークンなしで一覧は 401', r.statusCode, 401);
+
+  r = await call(m['upload-url.js'], mockReq({ method: 'POST', headers: auth(viewerToken), body: { filename: 'a.jpg' } }));
+  check('viewer はアップロード不可 403', r.statusCode, 403);
+
+  r = await call(m['delete.js'], mockReq({ method: 'POST', headers: auth(viewerToken), body: { id: 'x' } }));
+  check('viewer は削除不可 403', r.statusCode, 403);
+
+  /* ---------- 一覧（初期状態） ---------- */
+  log('\n<h2>■ /api/photos（初期状態）</h2>');
+  r = await call(m['photos.js'], mockReq({ headers: auth(viewerToken) }));
+  check('マニフェスト未作成でも 200 と空配列', [r.statusCode, r.body.total], [200, 0]);
+
+  /* ---------- アップロード用 URL ---------- */
+  log('\n<h2>■ /api/upload-url</h2>');
+  r = await call(m['upload-url.js'], mockReq({ method: 'POST', headers: auth(adminToken), body: {} }));
+  check('ファイル名なしは 400', r.statusCode, 400);
+
+  r = await call(m['upload-url.js'], mockReq({ method: 'POST', headers: auth(adminToken), body: { filename: '夏合宿 (1).jpg' } }));
+  const slot = r.body;
+  check('200 が返る', r.statusCode, 200);
+  check('保存先キーの形式', [slot.key, slot.thumbKey], [`photos/${slot.id}/full.jpg`, `photos/${slot.id}/thumb.jpg`]);
+  check('署名付き PUT URL が生成される', /^https:\/\/abcdef0123456789abcdef0123456789\.r2\.cloudflarestorage\.com\/ob-photo-album\/photos\/.+X-Amz-Signature=/.test(slot.uploadUrl), true);
+  check('有効期限が 900 秒', /X-Amz-Expires=900/.test(slot.uploadUrl), true);
+
+  /* 実際にブラウザがアップロードした体で R2 に置く */
+  store.set(slot.key, 'FULLDATA'); store.set(slot.thumbKey, 'THUMBDATA');
+
+  /* ---------- 登録 ---------- */
+  log('\n<h2>■ /api/register</h2>');
+  const regBody = { id: slot.id, key: slot.key, thumbKey: slot.thumbKey,
+    filename: '集合写真 (1).jpg', tags: '乾杯、5期 会場全景',
+    caption: '全員での記念撮影', takenAt: '2026-08-29T12:00:00.000Z',
+    width: 2048, height: 1536, size: 620000 };
+
+  r = await call(m['register.js'], mockReq({ method: 'POST', headers: auth(adminToken),
+    body: { ...regBody, key: 'photos/../../etc/passwd' } }));
+  check('保存先を偽装した登録は 400（パス改ざん防止）', r.statusCode, 400);
+
+  r = await call(m['register.js'], mockReq({ method: 'POST', headers: auth(adminToken),
+    body: { ...regBody, scene: '集合写真' } }));
+  check('正常な登録は 200', r.statusCode, 200);
+  check('シーンが保存される', r.body.photo.scene, '集合写真');
+  check('タグが読点・空白どちらでも分割される', r.body.photo.tags, ['乾杯', '5期', '会場全景']);
+  check('年やイベント名は保存しない（単一イベントのため）',
+    ['year' in r.body.photo, 'event' in r.body.photo], [false, false]);
+
+  r = await call(m['register.js'], mockReq({ method: 'POST', headers: auth(adminToken), body: regBody }));
+  check('同じ写真の二重登録は 409', r.statusCode, 409);
+
+  r = await call(m['register.js'], mockReq({ method: 'POST', headers: auth(adminToken),
+    body: { ...regBody, id: 'zzz', key: 'photos/zzz/full.jpg', thumbKey: 'photos/zzz/thumb.jpg',
+            scene: '二次会', takenAt: '2026-08-29T21:00:00.000Z' } }));
+  check('二次会も保存できる', r.body.photo.scene, '二次会');
+
+  r = await call(m['register.js'], mockReq({ method: 'POST', headers: auth(adminToken),
+    body: { ...regBody, id: 'yyy', key: 'photos/yyy/full.jpg', thumbKey: 'photos/yyy/thumb.jpg',
+            scene: '勝手な分類', takenAt: '2026-08-29T10:00:00.000Z' } }));
+  check('一覧に無いシーンは「その他」に寄せる', r.body.photo.scene, 'その他');
+
+  r = await call(m['register.js'], mockReq({ method: 'POST', headers: auth(adminToken),
+    body: { ...regBody, id: 'xxx', key: 'photos/xxx/full.jpg', thumbKey: 'photos/xxx/thumb.jpg',
+            takenAt: '2026-08-29T18:00:00.000Z' } }));
+  check('シーンの指定が無い場合も「その他」になる', r.body.photo.scene, 'その他');
+
+  /* ---------- 一覧（登録後） ---------- */
+  log('\n<h2>■ /api/photos（登録後）</h2>');
+  r = await call(m['photos.js'], mockReq({ headers: auth(viewerToken) }));
+  check('登録した4件が返る', r.body.total, 4);
+  check('シーンが3種類そろう',
+    [...new Set(r.body.photos.map((p) => p.scene))].sort(),
+    ['その他', '二次会', '集合写真'].sort());
+  check('撮影時刻の古い順に並ぶ（当日の流れを追える）',
+    r.body.photos.map((p) => p.takenAt.slice(11, 16)),
+    ['10:00', '12:00', '18:00', '21:00']);
+  const item = r.body.photos.find((p) => p.id === slot.id);
+  check('サムネイルの署名付き URL がある', /X-Amz-Signature=/.test(item.thumbUrl), true);
+  check('有効期限が 7200 秒', /X-Amz-Expires=7200/.test(item.thumbUrl), true);
+  check('保存キーは外部に出さない', [item.key, item.thumbKey], [undefined, undefined]);
+
+  r = await call(m['photos.js'], mockReq({ headers: auth(viewerToken), query: { id: slot.id } }));
+  check('個別指定で原寸 URL が返る', /X-Amz-Signature=/.test(r.body.url), true);
+
+  r = await call(m['photos.js'], mockReq({ headers: auth(viewerToken), query: { id: 'nope' } }));
+  check('存在しない ID は 404', r.statusCode, 404);
+
+  r = await call(m['photos.js'], mockReq({ headers: auth(viewerToken), query: { id: slot.id, download: '1' } }));
+  const dl = decodeURIComponent(r.body.url.match(/response-content-disposition=([^&]+)/)[1]);
+  check('ダウンロード指定で attachment になる', dl.startsWith('attachment;'), true);
+  check('日本語ファイル名が RFC5987 で入る', dl.includes("filename*=UTF-8''%E9%9B%86%E5%90%88%E5%86%99%E7%9C%9F"), true);
+  check('ASCII フォールバック名も入る', /filename="__+ \(1\)\.jpg"/.test(dl), true);
+
+  /* ---------- 情報の修正 ---------- */
+  log('\n<h2>■ /api/update（アップロード後の修正）</h2>');
+  r = await call(m['update.js'], mockReq({ method: 'GET', headers: auth(adminToken) }));
+  check('GET は 405', r.statusCode, 405);
+
+  r = await call(m['update.js'], mockReq({ method: 'POST', headers: auth(viewerToken), body: { id: slot.id } }));
+  check('viewer は修正できない 403', r.statusCode, 403);
+
+  r = await call(m['update.js'], mockReq({ method: 'POST', headers: auth(adminToken), body: {} }));
+  check('ID 未指定は 400', r.statusCode, 400);
+
+  r = await call(m['update.js'], mockReq({ method: 'POST', headers: auth(adminToken), body: { id: 'nope' } }));
+  check('存在しない ID は 404', r.statusCode, 404);
+
+  r = await call(m['update.js'], mockReq({ method: 'POST', headers: auth(adminToken),
+    body: { id: slot.id, scene: '歓談', tags: '談笑、テーブル', caption: '直した説明' } }));
+  check('修正は 200', r.statusCode, 200);
+  check('シーンが変わる', r.body.photo.scene, '歓談');
+  check('タグが差し替わる', r.body.photo.tags, ['談笑', 'テーブル']);
+  check('説明が差し替わる', r.body.photo.caption, '直した説明');
+  check('修正日時が記録される', typeof r.body.photo.updatedAt === 'string' && r.body.photo.updatedAt.length > 0, true);
+
+  r = await call(m['update.js'], mockReq({ method: 'POST', headers: auth(adminToken),
+    body: { id: slot.id, caption: '説明だけ変更' } }));
+  check('送っていない項目は元のまま', [r.body.photo.scene, r.body.photo.caption], ['歓談', '説明だけ変更']);
+
+  r = await call(m['update.js'], mockReq({ method: 'POST', headers: auth(adminToken),
+    body: { id: slot.id, scene: '存在しない場面' } }));
+  check('一覧に無いシーンは「その他」に寄せる', r.body.photo.scene, 'その他');
+
+  r = await call(m['update.js'], mockReq({ method: 'POST', headers: auth(adminToken),
+    body: { id: slot.id, scene: '集合写真', key: 'photos/hack/full.jpg', filename: 'x.jpg' } }));
+  check('保存先やファイル名は書き換えられない',
+    [r.body.photo.key, r.body.photo.filename], [slot.key, '集合写真 (1).jpg']);
+
+  r = await call(m['photos.js'], mockReq({ headers: auth(viewerToken) }));
+  check('修正内容が一覧に反映される',
+    r.body.photos.find((p) => p.id === slot.id).scene, '集合写真');
+
+  /* ---------- 動画リンク ---------- */
+  log('\n<h2>■ /api/videos（YouTube 限定公開へのリンク）</h2>');
+  const yt = m._videosMod.extractYouTubeId;
+
+  check('watch?v= 形式を解釈', yt('https://www.youtube.com/watch?v=dQw4w9WgXcQ'), 'dQw4w9WgXcQ');
+  check('youtu.be 形式を解釈', yt('https://youtu.be/dQw4w9WgXcQ'), 'dQw4w9WgXcQ');
+  check('embed 形式を解釈', yt('https://www.youtube.com/embed/dQw4w9WgXcQ'), 'dQw4w9WgXcQ');
+  check('live 形式を解釈', yt('https://www.youtube.com/live/dQw4w9WgXcQ'), 'dQw4w9WgXcQ');
+  check('余分なパラメータがあっても解釈',
+    yt('https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s&feature=share'), 'dQw4w9WgXcQ');
+  check('スマホ版ドメインも解釈', yt('https://m.youtube.com/watch?v=dQw4w9WgXcQ'), 'dQw4w9WgXcQ');
+  check('動画IDの直接入力も受け付ける', yt('dQw4w9WgXcQ'), 'dQw4w9WgXcQ');
+  check('YouTube 以外の URL は拒否', yt('https://example.com/watch?v=dQw4w9WgXcQ'), null);
+  check('URL でない文字列は拒否', yt('これは動画です'), null);
+  check('空は拒否', yt(''), null);
+
+  r = await call(m['videos.js'], mockReq({ method: 'GET', headers: {} }));
+  check('トークンなしの一覧は 401', r.statusCode, 401);
+
+  r = await call(m['videos.js'], mockReq({ method: 'GET', headers: auth(viewerToken) }));
+  check('初期状態は空の一覧', [r.statusCode, r.body.total], [200, 0]);
+
+  r = await call(m['videos.js'], mockReq({ method: 'POST', headers: auth(viewerToken),
+    body: { url: 'https://youtu.be/dQw4w9WgXcQ' } }));
+  check('viewer は登録できない 403', r.statusCode, 403);
+
+  r = await call(m['videos.js'], mockReq({ method: 'POST', headers: auth(adminToken),
+    body: { url: 'https://example.com/video.mp4', title: 'ダメな例' } }));
+  check('YouTube 以外は 400', r.statusCode, 400);
+
+  r = await call(m['videos.js'], mockReq({ method: 'POST', headers: auth(adminToken),
+    body: { url: 'https://youtu.be/dQw4w9WgXcQ', title: '余興：有志によるコント', note: '撮影：3期 山田さん' } }));
+  check('登録は 200', r.statusCode, 200);
+  check('再生URLが組み立てられる', r.body.video.watchUrl, 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+  check('サムネイルURLが組み立てられる', r.body.video.thumbUrl, 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg');
+  const videoId = r.body.video.id;
+
+  r = await call(m['videos.js'], mockReq({ method: 'POST', headers: auth(adminToken),
+    body: { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' } }));
+  check('同じ動画の二重登録は 409', r.statusCode, 409);
+
+  r = await call(m['videos.js'], mockReq({ method: 'POST', headers: auth(adminToken),
+    body: { url: 'https://youtu.be/aBcDeFgHiJk' } }));
+  check('タイトル未入力は「無題の動画」になる', r.body.video.title, '無題の動画');
+
+  r = await call(m['videos.js'], mockReq({ method: 'GET', headers: auth(viewerToken) }));
+  check('閲覧者も一覧を見られる', [r.statusCode, r.body.total], [200, 2]);
+
+  r = await call(m['videos.js'], mockReq({ method: 'DELETE', headers: auth(viewerToken), body: { id: videoId } }));
+  check('viewer は削除できない 403', r.statusCode, 403);
+
+  r = await call(m['videos.js'], mockReq({ method: 'DELETE', headers: auth(adminToken), body: { id: 'nope' } }));
+  check('存在しない動画の削除は 404', r.statusCode, 404);
+
+  r = await call(m['videos.js'], mockReq({ method: 'DELETE', headers: auth(adminToken), body: { id: videoId } }));
+  check('削除は 200 で残り1本', [r.statusCode, r.body.total], [200, 1]);
+
+  r = await call(m['videos.js'], mockReq({ method: 'PUT', headers: auth(adminToken) }));
+  check('未対応のメソッドは 405', r.statusCode, 405);
+
+  r = await call(m['photos.js'], mockReq({ headers: auth(viewerToken) }));
+  check('動画を足しても写真の件数は変わらない', r.body.total, 4);
+
+  /* ---------- 削除 ---------- */
+  log('\n<h2>■ /api/delete</h2>');
+  r = await call(m['delete.js'], mockReq({ method: 'POST', headers: auth(adminToken), body: { id: 'nope' } }));
+  check('存在しない ID の削除は 404', r.statusCode, 404);
+
+  r2Calls.length = 0;
+  r = await call(m['delete.js'], mockReq({ method: 'POST', headers: auth(adminToken), body: { id: slot.id } }));
+  check('削除は 200', r.statusCode, 200);
+  check('残り 3 件', r.body.total, 3);
+  check('原寸とサムネの両方を R2 から削除',
+    [store.has(slot.key), store.has(slot.thumbKey)], [false, false]);
+  check('DELETE を2回発行している', r2Calls.filter((c) => c.startsWith('DELETE')).length, 2);
+
+  r = await call(m['photos.js'], mockReq({ headers: auth(viewerToken) }));
+  check('一覧からも消えている', r.body.total, 3);
+
+  /* ---------- 環境変数が無い場合 ---------- */
+  log('\n<h2>■ 設定漏れ時の挙動</h2>');
+  const savedBucket = process.env.R2_BUCKET;
+  delete process.env.R2_BUCKET;
+  r = await call(m['photos.js'], mockReq({ headers: auth(viewerToken) }));
+  check('R2 設定漏れは 500 と、どの変数が未設定か示すメッセージ',
+    [r.statusCode, r.body.error.includes('R2_BUCKET')], [500, true]);
+  process.env.R2_BUCKET = savedBucket;
+
+  /* アカウントIDの形式チェック（今回の「fetch failed」の再発防止） */
+  const savedAccount = process.env.R2_ACCOUNT_ID;
+
+  process.env.R2_ACCOUNT_ID = '53da7a137e834899bfddbe276a521';  // 29文字＝画面の省略表示を写した想定
+  r = await call(m['photos.js'], mockReq({ headers: auth(viewerToken) }));
+  check('桁足らずのアカウントIDは文字数を示して 500',
+    [r.statusCode, r.body.error.includes('32桁'), r.body.error.includes('29 文字')], [500, true, true]);
+
+  process.env.R2_ACCOUNT_ID = `  ${savedAccount}\n`;  // 前後に空白・改行が混入した想定
+  r = await call(m['photos.js'], mockReq({ headers: auth(viewerToken) }));
+  check('前後の空白や改行は自動で除去され正常動作する', r.statusCode, 200);
+
+  process.env.R2_ACCOUNT_ID = 'https://abcdef0123456789abcdef0123456789.r2.cloudflarestorage.com';
+  r = await call(m['photos.js'], mockReq({ headers: auth(viewerToken) }));
+  check('URL 丸ごと貼り付けた場合も弾く', r.statusCode, 500);
+
+  process.env.R2_ACCOUNT_ID = savedAccount;
+
+  /* 接続自体が失敗した場合（ホスト名が無効なケース）のメッセージ */
+  const savedFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError('fetch failed'); };
+  r = await call(m['photos.js'], mockReq({ headers: auth(viewerToken) }));
+  check('接続失敗時は R2_ACCOUNT_ID の確認を促す',
+    [r.statusCode, r.body.error.includes('R2 への接続に失敗')], [500, true]);
+  globalThis.fetch = savedFetch;
+
+  /* ---------- 診断エンドポイント ---------- */
+  log('\n<h2>■ /api/health（設定の診断）</h2>');
+  r = await call(m['health.js'], mockReq({ method: 'POST' }));
+  check('POST は 405', r.statusCode, 405);
+
+  r = await call(m['health.js'], mockReq());
+  check('すべて揃っていれば 200 と ok:true', [r.statusCode, r.body.ok], [200, true]);
+  check('合言葉の有無を報告する',
+    [r.body.settings.ALBUM_PASSWORD, r.body.settings.ADMIN_PASSWORD], [true, true]);
+  check('合言葉の値そのものは含まない',
+    JSON.stringify(r.body).includes('admin-pw'), false);
+  check('認証なしで確認できる（トークン不要）', r.statusCode, 200);
+
+  const keepAdmin = process.env.ADMIN_PASSWORD;
+  delete process.env.ADMIN_PASSWORD;
+  r = await call(m['health.js'], mockReq());
+  check('ADMIN_PASSWORD 欠落を検知して 503',
+    [r.statusCode, r.body.ok, r.body.settings.ADMIN_PASSWORD], [503, false, false]);
+  check('不足している変数名を要約に出す', r.body.summary.includes('ADMIN_PASSWORD'), true);
+  process.env.ADMIN_PASSWORD = keepAdmin;
+
+  const keepFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError('fetch failed'); };
+  r = await call(m['health.js'], mockReq());
+  check('R2 に到達できない場合も 503 で原因を示す',
+    [r.statusCode, r.body.storage.reachable, r.body.storage.note.includes('R2_ACCOUNT_ID')], [503, false, true]);
+  check('接続先ホスト（アカウントID）は含まない',
+    JSON.stringify(r.body).includes('abcdef0123456789'), false);
+  globalThis.fetch = keepFetch;
+
+  r = await call(m['health.js'], mockReq());
+  check('復旧すると再び ok:true', [r.statusCode, r.body.ok], [200, true]);
+  check('診断結果はキャッシュさせない', r.headers['Cache-Control'], 'no-store');
+
+  log(`\n${'='.repeat(52)}`);
+  log(fail === 0 ? `<span class="ok">すべて成功: ${pass} 件</span>` : `<span class="ng">失敗 ${fail} 件 / 成功 ${pass} 件</span>`);
+  document.getElementById('out').innerHTML = lines.join('\n');
+  console.log(fail === 0 ? `API_TEST_RESULT: ALL_PASS (${pass})` : `API_TEST_RESULT: FAIL (${fail})`);
+})();
+</script>
+</body>
+</html>

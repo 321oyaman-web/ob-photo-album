@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head><meta charset="UTF-8"><title>SigV4 検証</title>
+<style>body{font-family:monospace;padding:20px;line-height:1.7}pre{white-space:pre-wrap}
+.ok{color:#0a7d28;font-weight:bold}.ng{color:#c0392b;font-weight:bold}</style></head>
+<body>
+<h1>_r2.js の SigV4 実装検証</h1>
+<pre id="out">実行中…</pre>
+
+<script>
+/* ============================================================
+   api/_r2.js の署名ロジックを Web Crypto に移植したもの。
+   ロジック（正規化リクエストの組み立て・署名鍵の導出・順序）は
+   _r2.js と 1 対 1 で対応させ、region/service/host のみ引数化している。
+============================================================ */
+
+const enc = new TextEncoder();
+
+async function sha256Hex(str) {
+  const buf = await crypto.subtle.digest('SHA-256', enc.encode(str));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function hmac(keyBytes, msg) {
+  const key = await crypto.subtle.importKey('raw', keyBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return new Uint8Array(await crypto.subtle.sign('HMAC', key, enc.encode(msg)));
+}
+
+/* --- _r2.js の rfc3986Encode と同一 --- */
+function rfc3986Encode(value) {
+  return encodeURIComponent(value).replace(
+    /[!'()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`
+  );
+}
+
+/* --- _r2.js の encodeKey と同一 --- */
+function encodeKey(key) {
+  return key.split('/').map(rfc3986Encode).join('/');
+}
+
+/* --- _r2.js の deriveSigningKey と同一 --- */
+async function deriveSigningKey(secret, stamp, region, service) {
+  const kDate = await hmac(enc.encode(`AWS4${secret}`), stamp);
+  const kRegion = await hmac(kDate, region);
+  const kService = await hmac(kRegion, service);
+  return await hmac(kService, 'aws4_request');
+}
+
+/* --- _r2.js の presignUrl と同一の組み立て --- */
+async function presign({ method, host, canonicalUri, accessKeyId, secret, region, service, amz, stamp, expiresIn, extraQuery = {} }) {
+  const query = {
+    'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
+    'X-Amz-Credential': `${accessKeyId}/${stamp}/${region}/${service}/aws4_request`,
+    'X-Amz-Date': amz,
+    'X-Amz-Expires': String(expiresIn),
+    'X-Amz-SignedHeaders': 'host',
+    ...extraQuery,
+  };
+
+  const canonicalQuery = Object.keys(query).sort()
+    .map((k) => `${rfc3986Encode(k)}=${rfc3986Encode(query[k])}`)
+    .join('&');
+
+  const canonicalRequest = [
+    method, canonicalUri, canonicalQuery, `host:${host}\n`, 'host', 'UNSIGNED-PAYLOAD',
+  ].join('\n');
+
+  const stringToSign = [
+    'AWS4-HMAC-SHA256', amz, `${stamp}/${region}/${service}/aws4_request`,
+    await sha256Hex(canonicalRequest),
+  ].join('\n');
+
+  const sigBytes = await hmac(await deriveSigningKey(secret, stamp, region, service), stringToSign);
+  const signature = [...sigBytes].map(b => b.toString(16).padStart(2, '0')).join('');
+
+  return { canonicalRequest, stringToSign, signature };
+}
+
+/* ============================================================
+   テスト実行
+============================================================ */
+const lines = [];
+const log = (s) => lines.push(s);
+let pass = 0, fail = 0;
+
+function check(name, actual, expected) {
+  const ok = actual === expected;
+  ok ? pass++ : fail++;
+  log(`${ok ? '<span class="ok">[PASS]</span>' : '<span class="ng">[FAIL]</span>'} ${name}`);
+  if (!ok) {
+    log(`         期待値: ${expected}`);
+    log(`         実際値: ${actual}`);
+  }
+}
+
+(async () => {
+  /* --- テスト1: AWS 公式ドキュメントの署名付きURL例 --- */
+  log('■ テスト1: AWS 公式の presigned URL テストベクトル');
+  log('  GET https://examplebucket.s3.amazonaws.com/test.txt (X-Amz-Expires=86400)');
+  const t1 = await presign({
+    method: 'GET',
+    host: 'examplebucket.s3.amazonaws.com',
+    canonicalUri: '/test.txt',
+    accessKeyId: 'AKIAIOSFODNN7EXAMPLE',
+    secret: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    region: 'us-east-1',
+    service: 's3',
+    amz: '20130524T000000Z',
+    stamp: '20130524',
+    expiresIn: 86400,
+  });
+  log('\n--- 生成された正規化リクエスト ---');
+  log(t1.canonicalRequest.replace(/</g, '&lt;'));
+  log('---------------------------------\n');
+  check('署名が AWS 公式の値と一致すること',
+    t1.signature,
+    'aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404');
+
+  /* --- テスト2: RFC3986 エンコード（丸括弧を含むファイル名） --- */
+  log('\n■ テスト2: ファイル名のエンコード');
+  check('丸括弧・スペースが正しくエンコードされること',
+    encodeKey("photos/abc/IMG_1234 (1)'s.jpg"),
+    'photos/abc/IMG_1234%20%281%29%27s.jpg');
+  check('日本語ファイル名がエンコードされること',
+    encodeKey('photos/合宿.jpg'),
+    'photos/%E5%90%88%E5%AE%BF.jpg');
+  check('スラッシュは区切りとして保持されること',
+    encodeKey('photos/uuid/full.jpg'),
+    'photos/uuid/full.jpg');
+
+  /* --- テスト3: R2 のパススタイル URL でも同じ手順が通ること --- */
+  log('\n■ テスト3: R2（パススタイル / region=auto）での生成');
+  const t3 = await presign({
+    method: 'PUT',
+    host: 'abc123.r2.cloudflarestorage.com',
+    canonicalUri: `/ob-photo-album/${encodeKey('photos/xyz/full.jpg')}`,
+    accessKeyId: 'TESTKEY',
+    secret: 'TESTSECRET',
+    region: 'auto',
+    service: 's3',
+    amz: '20260731T000000Z',
+    stamp: '20260731',
+    expiresIn: 900,
+  });
+  check('署名が64桁の16進数であること', /^[0-9a-f]{64}$/.test(t3.signature) ? 'ok' : t3.signature, 'ok');
+  check('クレデンシャルスコープが auto/s3 であること',
+    t3.stringToSign.split('\n')[2], '20260731/auto/s3/aws4_request');
+
+  /* --- テスト4: Content-Disposition を含む署名（ダウンロード時） --- */
+  log('\n■ テスト4: ダウンロード用パラメータ付きの署名');
+  const t4 = await presign({
+    method: 'GET',
+    host: 'abc123.r2.cloudflarestorage.com',
+    canonicalUri: '/ob-photo-album/photos/xyz/full.jpg',
+    accessKeyId: 'TESTKEY', secret: 'TESTSECRET',
+    region: 'auto', service: 's3',
+    amz: '20260731T000000Z', stamp: '20260731', expiresIn: 7200,
+    extraQuery: { 'response-content-disposition': "attachment; filename=\"IMG (1).jpg\"; filename*=UTF-8''%E5%90%88%E5%AE%BF.jpg" },
+  });
+  const qLine = t4.canonicalRequest.split('\n')[2];
+  check('クエリがキー名の辞書順に並ぶこと（response- が X-Amz- より後）',
+    qLine.startsWith('X-Amz-Algorithm=') && qLine.includes('&response-content-disposition=') ? 'ok' : qLine, 'ok');
+  /* 丸括弧は %28 %29 に、* は %2A に、元からあった % は %25 になる */
+  check('丸括弧が %28 %29 にエンコードされること',
+    qLine.includes('IMG%20%281%29.jpg') ? 'ok' : qLine, 'ok');
+  check('アスタリスク（RFC5987）が %2A にエンコードされること',
+    qLine.includes('filename%2A%3DUTF-8') ? 'ok' : qLine, 'ok');
+  check('RFC5987 の % が %25 にエンコードされること',
+    qLine.includes("%27%27%25E5%2590%2588") ? 'ok' : qLine, 'ok');
+
+  log(`\n${'='.repeat(50)}`);
+  log(fail === 0
+    ? `<span class="ok">すべて成功: ${pass} 件</span>`
+    : `<span class="ng">失敗 ${fail} 件 / 成功 ${pass} 件</span>`);
+
+  document.getElementById('out').innerHTML = lines.join('\n');
+  console.log(fail === 0 ? `SIGV4_TEST_RESULT: ALL_PASS (${pass})` : `SIGV4_TEST_RESULT: FAIL (${fail})`);
+})();
+</script>
+</body>
+</html>

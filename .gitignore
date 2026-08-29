@@ -1,4 +1,4 @@
-# Claude Code 設定
+﻿# Claude Code 設定
 .claude/
 
 # 依存関係
@@ -14,6 +14,10 @@ node_modules/
 
 # Vercel
 .vercel/
+
+# テストの生成物（雛形とスクリプトは追跡する）
+tests/TEST*.html
+tests/src*.js
 
 # 下書き・作業中ファイル
 _drafts/

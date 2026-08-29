@@ -1,7 +1,12 @@
-# OB会 思い出アルバム
+# Sophia ESS Reunion 2026 思い出アルバム
 
-サークルのOB会の思い出写真を、**無料枠のまま500枚以上**保存・共有できるサイトです。
-チャットボット「アルバム係」に話しかけて、写真を探したり（出す）、追加したり（入れる）できます。
+**2026年8月29日に開催される Sophia ESS Reunion 2026** の写真を、無料枠のまま
+500枚以上保存・共有できるサイトです。
+
+公開URL: https://ob-photo-album.vercel.app
+
+チャットボット「アルバム係」に話しかけて写真を探せます。動画は YouTube の
+限定公開に置き、アルバムからリンクします。
 
 ---
 
@@ -12,17 +17,29 @@
 | 写真の保管庫 | Cloudflare R2（10GB 無料・**閲覧の転送量は無料**） | 0円 |
 | サイト公開・API | Vercel（Hobby プラン） | 0円 |
 | チャットボット | ルールベース（ブラウザ内で完結） | 0円 |
+| 動画 | YouTube（限定公開）へのリンクのみ保持 | 0円 |
 | データベース | 不要（R2 上の JSON 1ファイルで管理） | 0円 |
 
 **外部パッケージは一切使っていません**（`npm install` 不要）。AWS の署名処理は Node 標準の `crypto` だけで実装しています。
+
+### 写真の分類
+
+1日のイベントなので、当日の流れに沿った **シーン** の1軸で分類します。
+
+`受付・開会` → `集合写真` → `歓談` → `スピーチ・挨拶` → `余興・企画` → `二次会` → `その他`
+
+一覧は**撮影時刻の古い順**に並び、当日を追体験できます。
 
 ### 容量の目安
 
 アップロード時にブラウザ側で自動縮小します（長辺2048px・JPEG）。
 
 - 1枚あたり約 **0.4〜0.8MB**（原本が5MBでも縮小されます）
-- **500枚 ≒ 約300MB** → 10GB の無料枠に対して **3%程度**
+- **500枚 ≒ 約300〜400MB** → 10GB の無料枠に対して **3〜4%程度**
 - 計算上は **1万枚以上**保存できます
+
+動画を R2 に直接置かないのは容量のためです。フルHD で1分あたり約60MB、4K なら
+約170MB を消費し、10GB の無料枠を短時間で使い切ります。
 
 ---
 
@@ -31,18 +48,28 @@
 ### 1. Cloudflare R2 でバケットを作る
 
 1. [Cloudflare](https://dash.cloudflare.com/) にサインアップ（無料）
-2. 左メニューの **R2** を開く
-3. R2 の有効化にはクレジットカード登録が必要です（**無料枠の範囲内なら請求は発生しません**）
+2. 左メニューの **Storage & databases** → **R2 Object Storage**
+   （直リンク: `https://dash.cloudflare.com/?to=/:account/r2/overview`）
+3. R2 の有効化にはクレジットカード登録が必要です（**無料枠の範囲内なら請求は発生しません**）。
+   **Standard** ストレージを選んでください。無料枠は Standard のみが対象です
 4. **Create bucket** をクリックし、名前を `ob-photo-album` にする
-5. 作成後、画面右側に表示される **アカウントID** を控える
+5. **Public Access は Disabled のまま**にしてください（署名付きURLで配信する設計です）
+6. R2 の **Overview** 画面右側の **Account Details** にある **Account ID** を、
+   **コピーボタン（⧉）で**控える
+
+> ⚠️ Account ID は画面上で末尾が「…」と省略表示されます。**目で見て書き写すと桁が
+> 足りません**（正しくは32桁）。必ずコピーボタンを使ってください。
 
 ### 2. R2 の API トークンを発行する
 
-1. R2 の画面で **API** → **Manage API Tokens** → **Create API Token**
-2. 権限は **Object Read & Write** を選ぶ
-3. 対象バケットを `ob-photo-album` に限定する（推奨）
-4. 表示される **Access Key ID** と **Secret Access Key** を控える
-   （Secret は一度しか表示されません）
+1. Overview の **Account Details → API Tokens → Manage**
+2. **Create Account API token** を選ぶ
+   （User API token はユーザーが組織を抜けると無効になり、サイトが止まります）
+3. 権限は **Object Read & Write**（Admin は不要）
+4. 対象バケットを `ob-photo-album` に限定する（推奨）
+5. TTL は **Forever**（期限を切るとその日にサイトが止まります）
+6. 表示される **Access Key ID** と **Secret Access Key** を控える
+   （Secret は一度しか表示されません。控える前に画面を閉じないこと）
 
 > ⚠️ 控えたキーは **OneDrive の中に保存しないでください**。
 > ローカルに置く場合は `C:\Users\qqdx4\secrets\ob-photo-album\.env` など OneDrive の外へ。
@@ -58,26 +85,36 @@
 
 ### 4. 環境変数を設定する
 
-Vercel のプロジェクト画面 → **Settings** → **Environment Variables** に以下を登録します。
+Vercel のプロジェクト画面 → **Settings** → **Environments** → **Production** の行をクリック
+→ ページ下部の **Environment Variables** に登録します。
 （`.env.example` と同じ項目です。**コードには絶対に書かないでください**）
 
 | 変数名 | 内容 |
 |---|---|
-| `R2_ACCOUNT_ID` | 手順1で控えたアカウントID |
+| `R2_ACCOUNT_ID` | 手順1で控えたアカウントID（32桁） |
 | `R2_ACCESS_KEY_ID` | 手順2の Access Key ID |
 | `R2_SECRET_ACCESS_KEY` | 手順2の Secret Access Key |
 | `R2_BUCKET` | `ob-photo-album` |
-| `ALBUM_PASSWORD` | **閲覧用の合言葉**（OB会メンバーに配布） |
-| `ADMIN_PASSWORD` | **管理用の合言葉**（幹事のみ。追加・削除ができる） |
-| `SESSION_SECRET` | 32文字以上のランダム文字列 |
+| `ALBUM_PASSWORD` | **閲覧用の合言葉**（参加者に配布） |
+| `ADMIN_PASSWORD` | **管理用の合言葉**（幹事のみ。追加・修正・削除ができる） |
+| `SESSION_SECRET` | 32文字以上のランダム文字列（下記で生成） |
 
-`SESSION_SECRET` は PowerShell で生成できます。
+入力欄は最初1組だけです。**「+ Add Another」で必要な数だけ増やして**ください。
+
+`SESSION_SECRET` は、暗号用の乱数生成器で作ってクリップボードに入れます。
 
 ```bash
-powershell -Command "[Convert]::ToBase64String((1..32|%{Get-Random -Max 256}))"
+powershell -Command "$b=New-Object byte[] 48; [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b) | Set-Clipboard; 'クリップボードにコピーしました'"
 ```
 
-登録後、**Deployments → 最新のデプロイ → Redeploy** で環境変数を反映させてください。
+> `Get-Random` は暗号学的に安全な乱数ではないため、この用途には使わないでください。
+> この鍵が推測されると、合言葉を知らない人でも管理者としてのログイン状態を偽造できます。
+
+**登録後、必ず Deployments → 最新のデプロイ → 「⋯」→ Redeploy を実行してください。**
+環境変数は再デプロイするまで反映されません。反映後は `/api/health` で `ok:true` を確認します。
+
+> Save した後、**一覧に変数が並んでいるか目視で確認**してください。保存されたように見えて
+> 保存されていないことがあります。`/api/health` は、どの変数が未設定かを名指しで教えます。
 
 ### 5. R2 のCORS設定（これを忘れるとアップロードだけが失敗します）
 
@@ -86,7 +123,11 @@ powershell -Command "[Convert]::ToBase64String((1..32|%{Get-Random -Max 256}))"
 ```json
 [
   {
-    "AllowedOrigins": ["https://あなたのサイト.vercel.app"],
+    "AllowedOrigins": [
+      "https://ob-photo-album.vercel.app",
+      "https://ob-photo-album-321oyaman-webs-projects.vercel.app",
+      "https://ob-photo-album-git-main-321oyaman-webs-projects.vercel.app"
+    ],
     "AllowedMethods": ["GET", "PUT"],
     "AllowedHeaders": ["*"],
     "ExposeHeaders": ["ETag"],
@@ -100,10 +141,11 @@ powershell -Command "[Convert]::ToBase64String((1..32|%{Get-Random -Max 256}))"
 
 ### 6. 動作確認
 
-1. サイトを開き、**管理用の合言葉**でログイン
+1. サイトを開き、**管理用の合言葉**でログイン（ヘッダーが「管理モード」になります）
 2. 「写真を追加」から1枚アップロードして、ギャラリーに出るか確認
 3. 写真をタップ →「ダウンロード」で保存できるか確認
 4. チャットボットに「何枚ある？」と聞いて応答するか確認
+5. `/api/health` を開いて `"ok":true` を確認
 
 ---
 
@@ -172,14 +214,35 @@ powershell -Command "[Convert]::ToBase64String((1..32|%{Get-Random -Max 256}))"
 
 ---
 
+## 困ったときは
+
+**まず https://ob-photo-album.vercel.app/api/health を開いてください。**
+合言葉なしで設定状態を確認できます。値そのものは表示されません。
+
+```
+{"ok":true,"summary":"すべて正常です", ...}   ← 正常
+{"ok":false,"summary":"設定が不足しています: ADMIN_PASSWORD", ...}
+```
+
+環境変数を変更したら、**必ず Redeploy してから** `ok:true` を確認してください。
+変更は再デプロイするまで反映されません。
+
+---
+
 ## 制限事項
 
 - **HEIC 形式**（iPhone の標準設定）は Safari 以外のブラウザで変換に失敗することがあります。
   iPhone 側で「設定 → カメラ → フォーマット → 互換性優先」にしておくと JPEG で撮影されます。
+- **アップロードは幹事（管理用の合言葉）のみ**です。参加者の写真は、ギガファイル便などで
+  受け取ってから登録してください。
+- **同じ写真を2回アップロードしても重複として検知しません。**分割してアップロードする際は、
+  どこまで入れたか手元で管理してください。
 - 複数人が**同時に**アップロードすると、写真一覧（`index/manifest.json`）の更新が競合して
-  一部の登録が失われる可能性があります。アップロードは幹事の方が順番に行ってください。
+  一部の登録が失われる可能性があります。アップロードは順番に行ってください。
 - アップロード時に長辺2048pxへ縮小されるため、**原本そのままの画質では保存されません**。
   原本を残したい場合は別途バックアップを取ってください。
+- **動画の直接アップロードはできません。**YouTube の限定公開に置いてリンクを登録します。
+- 動画のタイトルを後から修正する機能はありません。削除して登録し直してください。
 
 ---
 
@@ -190,22 +253,32 @@ ob-photo-album/
 ├── index.html          … 画面全体
 ├── css/style.css       … スタイル（レスポンシブ・ダークモード対応）
 ├── js/
-│   ├── app.js          … ログイン・一覧・拡大表示・アップロード
+│   ├── app.js          … ログイン・一覧・拡大表示・アップロード・修正・動画
 │   └── chatbot.js      … チャットボット「アルバム係」
 ├── api/
 │   ├── _r2.js          … R2 アクセス（AWS SigV4 署名を自前実装）
 │   ├── _auth.js        … 合言葉による認証
-│   ├── login.js        … POST /api/login
-│   ├── photos.js       … GET  /api/photos
-│   ├── upload-url.js   … POST /api/upload-url
-│   ├── register.js     … POST /api/register
-│   └── delete.js       … POST /api/delete
+│   ├── _scenes.js      … シーン定義（js/app.js の SCENES と同じ内容を保つこと）
+│   ├── login.js        … POST   /api/login
+│   ├── photos.js       … GET    /api/photos
+│   ├── upload-url.js   … POST   /api/upload-url
+│   ├── register.js     … POST   /api/register
+│   ├── update.js       … POST   /api/update   （シーン・タグ・説明の修正）
+│   ├── delete.js       … POST   /api/delete
+│   ├── videos.js       … GET/POST/DELETE /api/videos（YouTube リンク）
+│   └── health.js       … GET    /api/health  （設定の診断）
 ├── .env.example        … 環境変数テンプレート（ダミー値のみ）
-├── _drafts/
-│   └── sigv4-test.html … 署名処理の検証ページ（Git・デプロイ対象外）
+├── tests/              … 検証ツール（デプロイ対象外）
+│   ├── build-test.ps1  … テストページを生成する（実行するのはこれ）
+│   ├── api-test.template.html … api/ の統合テストの雛形
+│   ├── sigv4-test.html … 署名処理の検証
+│   └── ui-mock.js      … 画面確認用のモック
 ├── vercel.json
 └── package.json
 ```
+
+> **シーンを増減する場合**は、`api/_scenes.js` と `js/app.js` の `SCENES` を
+> **必ず両方**書き換えてください。食い違うと、選んだシーンが「その他」に寄せられます。
 
 ---
 
@@ -214,26 +287,39 @@ ob-photo-album/
 `api/_r2.js` の AWS SigV4 署名は外部ライブラリを使わない自前実装のため、
 **AWS 公式ドキュメントのテストベクトルと照合して検証済み**です。
 
-`_drafts/sigv4-test.html` をブラウザで開くと、以下が再確認できます（全10件 PASS）。
+`tests/sigv4-test.html` をブラウザで開くと、以下が再確認できます（全10件 PASS）。
 
 - AWS 公式の presigned URL 例と署名が完全一致すること
 - ファイル名の `( )` `'` や日本語が正しくエンコードされること
 - R2（`region=auto`・パススタイル）で正しい形式になること
 - ダウンロード時の `Content-Disposition` が正しく署名されること
 
-`api/` のハンドラーも、R2 をメモリ上に模した状態で**全44件の統合テストが通っています**
-（`_drafts/api-test.html`）。ログイン・トークン改ざん検知・権限チェック・登録・削除・
-日本語ファイル名のダウンロードまで、実ファイルをそのまま読み込んで検証しています。
+`api/` のハンドラーも、R2 をメモリ上に模した状態で**全109件の統合テストが通っています**
+（`tests/TEST*.html`）。実ファイルをそのまま ES モジュールとして読み込み、以下を検証しています。
 
-api/ を修正したあとにテストし直す場合は、先に読み込み用データを作り直してください。
+- ログイン、トークンの改ざん・すげ替え・期限切れの検知
+- 権限チェック（閲覧者は追加・修正・削除ができない）
+- 登録、保存先の偽装の拒否、二重登録の検知
+- 修正（送っていない項目は変更せず、保存先やファイル名は書き換え不可）
+- 削除（原寸とサムネの両方を確実に消す）
+- 日本語ファイル名のダウンロード（RFC 5987）
+- YouTube URL の各形式の解釈と、YouTube 以外の URL の拒否
+- 設定漏れ・接続失敗時に原因を示すこと
+
+### テストのやり直し方
+
+api/ を修正したあとは、読み込み用データとテストページを**新しいファイル名で**作り直します。
+ブラウザが `file://` を強くキャッシュするため、同じ名前だと古い内容が実行されてしまいます。
 
 ```bash
-powershell -Command "$d='ob-photo-album'; $m=[ordered]@{}; @('_r2.js','_auth.js','login.js','photos.js','upload-url.js','register.js','delete.js') | %{ $m[$_] = Get-Content \"$d\api\$_\" -Raw -Encoding UTF8 }; Set-Content \"$d\_drafts\api-sources.js\" -Value ('window.API_SOURCES = ' + ($m | ConvertTo-Json -Depth 3 -Compress) + ';') -Encoding UTF8 -NoNewline"
+powershell -File tests/build-test.ps1
 ```
+
+生成された `tests/TEST<数字>.html` をダブルクリックし、最下行の件数を確認してください。
 
 画面側も、API をモックした状態で以下を確認済みです。
 
-- ログイン → 一覧表示 → 年・イベントの絞り込み → 拡大表示 → キーボード操作
-- 閲覧モードでは「写真を追加」「削除」が現れないこと
-- チャットボットの検索（西暦・和暦・イベント名・タグ・1文字の語）
+- ログイン → 一覧表示 → シーンでの絞り込み → 拡大表示 → キーボード操作
+- 閲覧モードでは「写真を追加」「動画を追加」「情報を修正」「削除」が現れないこと
+- 24MP の写真が 2048px に縮小され、サムネイルとともに送信されること
 - スマホ（375px：2列）／タブレット（582px：3列）／PC（1280px：5列）で横スクロールが出ないこと
