@@ -66,6 +66,8 @@
     fileInput: $('file-input'),
     pickedInfo: $('picked-info'),
     metaScene: $('meta-scene'),
+    policyOpenBtn: $('policy-open-btn'),
+    policyModal: $('policy-modal'),
     videoOpenBtn: $('video-open-btn'),
     videoSection: $('video-section'),
     videoList: $('video-list'),
@@ -214,6 +216,21 @@
     const videoPart = state.videos.length > 0 ? ` ・ 動画 ${state.videos.length} 本` : '';
     el.headerCount.textContent = `全 ${total} 枚${videoPart} ・ ${roleLabel}`;
   }
+
+  /* ----------------------------------------
+     写真の取り扱いについて（フッターから開く）
+  ---------------------------------------- */
+  el.policyOpenBtn.addEventListener('click', () => {
+    el.policyModal.hidden = false;
+    document.body.style.overflow = 'hidden';
+  });
+
+  document.querySelectorAll('[data-close-policy]').forEach((node) => {
+    node.addEventListener('click', () => {
+      el.policyModal.hidden = true;
+      document.body.style.overflow = '';
+    });
+  });
 
   /* ----------------------------------------
      動画（YouTube 限定公開へのリンク）

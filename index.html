@@ -25,6 +25,11 @@
         ご覧いただくには合言葉が必要です。幹事からお知らせした合言葉を入力してください。
       </p>
 
+      <p class="login__note">
+        このアルバムは参加者のみで共有しています。<br>
+        合言葉とURLの転送はお控えください。
+      </p>
+
       <form class="login__form" id="login-form">
         <label class="login__label" for="password">合言葉</label>
         <input
@@ -113,7 +118,8 @@
     </main>
 
     <footer class="footer">
-      <p>思い出アルバム — 大切な写真は関係者のみで共有しています。SNS等への転載はご遠慮ください。</p>
+      <p>写真は Sophia ESS Reunion 2026 の参加者のみで共有しています。SNS等への掲載はご遠慮ください。</p>
+      <button class="footer__link" type="button" id="policy-open-btn">写真の取り扱いについて</button>
     </footer>
   </div>
 
@@ -172,6 +178,53 @@
       <div class="modal__foot">
         <button class="btn btn--ghost" data-close-upload>キャンセル</button>
         <button class="btn btn--primary" id="upload-start-btn" disabled>アップロード</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================
+       写真の取り扱いについて（フッターから開く）
+  ============================================ -->
+  <div class="modal" id="policy-modal" hidden>
+    <div class="modal__backdrop" data-close-policy></div>
+    <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="policy-title">
+      <div class="modal__head">
+        <h2 class="modal__title" id="policy-title">写真の取り扱いについてのお願い</h2>
+        <button class="modal__close" data-close-policy aria-label="閉じる">&times;</button>
+      </div>
+
+      <div class="modal__body policy">
+        <p class="policy__lead">
+          このアルバムは、2026年8月29日の Sophia ESS Reunion 2026 にご参加のみなさまで、
+          当日の思い出を分かち合うためのものです。<br>
+          みなさまに気持ちよくご覧いただくため、次の点にご配慮いただけますと幸いです。
+        </p>
+
+        <h3 class="policy__head">1. URLと合言葉は、参加者のあいだにとどめてください</h3>
+        <p class="policy__text">当日ご一緒でなかった方への転送はお控えください。</p>
+
+        <h3 class="policy__head">2. SNSやブログなど、公開の場への掲載はご遠慮ください</h3>
+        <p class="policy__text">
+          写真にはご自身以外の方も写っています。ご自身が写っている写真であっても、
+          ご一緒に写っている方への配慮をお願いします。
+        </p>
+
+        <h3 class="policy__head">3. ダウンロードした写真は、私的な範囲でお楽しみください</h3>
+        <p class="policy__text">
+          ご家族に見せる、年賀状に使うといった個人的なご利用は差し支えありません。
+        </p>
+
+        <h3 class="policy__head">4. 掲載を控えてほしい写真は、遠慮なく幹事までお知らせください</h3>
+        <p class="policy__text">理由を伺うことはありません。確認しだい削除いたします。</p>
+
+        <p class="policy__contact">
+          ご不明な点や気になることがありましたら、幹事までお気軽にご連絡ください。<br>
+          <a href="mailto:qqdx4qyd@future.ocn.ne.jp">qqdx4qyd@future.ocn.ne.jp</a>
+        </p>
+      </div>
+
+      <div class="modal__foot">
+        <button class="btn btn--primary" data-close-policy>閉じる</button>
       </div>
     </div>
   </div>

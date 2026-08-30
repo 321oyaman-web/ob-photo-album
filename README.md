@@ -211,6 +211,9 @@ powershell -Command "$b=New-Object byte[] 48; [System.Security.Cryptography.Rand
 - R2 のシークレットは**サーバー側（Vercel Functions）にのみ存在**し、ブラウザには渡らない
 - ログイン状態は HMAC 署名付きトークンで管理（有効期間7日・`sessionStorage` 保存）
 - 検索エンジンにインデックスされないよう `noindex` を指定
+- 写真の取り扱いについてのお願いを、ログイン画面（一行）とフッター（詳細）に掲示
+  - 削除依頼の連絡先は**ログイン後のフッター内**にのみ記載（合言葉なしでは読めないため、
+    メールアドレスが外部に収集されにくい）
 
 ---
 
