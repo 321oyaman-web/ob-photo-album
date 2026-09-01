@@ -951,7 +951,11 @@ select.field__input {
 .progress__text {
   margin: 8px 0 0;
   font-size: 12px;
+  line-height: 1.7;
   color: var(--ink-soft);
+  /* 失敗時はファイル名と理由を改行して出すため、改行を保持する */
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* ----------------------------------------

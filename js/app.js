@@ -43,6 +43,11 @@
   const THUMB_MAX_EDGE = 480;
   const THUMB_QUALITY = 0.72;
 
+  /* PDF かどうかの判定。ブラウザが種別を空で渡すことがあるため拡張子でも見る。
+     ファイル選択・ドロップ・アップロードの3箇所で使う */
+  const isPdfFile = (file) =>
+    file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
+
   const $ = (id) => document.getElementById(id);
 
   const el = {
@@ -724,8 +729,14 @@
   });
 
   el.dropZone.addEventListener('drop', (e) => {
-    const files = [...(e.dataTransfer?.files || [])].filter((f) => f.type.startsWith('image/'));
+    const dropped = [...(e.dataTransfer?.files || [])];
+    const files = dropped.filter((f) => isPdfFile(f) || f.type.startsWith('image/'));
+    const skipped = dropped.length - files.length;
+
     setPickedFiles(files);
+    if (skipped > 0) {
+      toast(`${skipped} 件は対象外のため除きました（写真とPDFのみ）`, true);
+    }
   });
 
   function setPickedFiles(files) {
@@ -736,8 +747,15 @@
       return;
     }
 
+    const pdfCount = files.filter(isPdfFile).length;
+    const photoCount = files.length - pdfCount;
     const totalMb = files.reduce((sum, f) => sum + f.size, 0) / 1024 / 1024;
-    el.pickedInfo.textContent = `${files.length} 枚を選択中（合計 ${totalMb.toFixed(1)} MB）`;
+
+    const parts = [];
+    if (photoCount > 0) parts.push(`写真 ${photoCount} 枚`);
+    if (pdfCount > 0) parts.push(`資料(PDF) ${pdfCount} 件`);
+
+    el.pickedInfo.textContent = `${parts.join(' ・ ')} を選択中（合計 ${totalMb.toFixed(1)} MB）`;
     el.pickedInfo.hidden = false;
     el.uploadStartBtn.disabled = false;
   }
@@ -783,9 +801,6 @@
       bitmap.close();
     }
   }
-
-  const isPdfFile = (file) =>
-    file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
 
   /* 署名付き URL へ直接 PUT する。
      ここで指定した種別が R2 に記録され、閲覧時のブラウザの挙動を決める
@@ -865,7 +880,13 @@
         });
       } catch (err) {
         console.error(`[アップロード失敗] ${file.name}`, err);
-        failed.push({ name: file.name, reason: err.message });
+        /* どのファイルが、どう認識されて失敗したのかを残す。
+           種別の判定を誤ると原因が分かりにくくなるため */
+        failed.push({
+          name: file.name,
+          detected: isPdfFile(file) ? 'PDF' : `写真（${file.type || '種別不明'}）`,
+          reason: err.message,
+        });
       }
 
       done += 1;
@@ -875,11 +896,12 @@
     const succeeded = files.length - failed.length;
 
     if (failed.length > 0) {
-      /* 失敗理由を推測で書かず、実際に起きたエラーをそのまま画面に出す */
-      const reason = failed[0].reason;
+      /* 失敗理由を推測で書かず、実際に起きたことをそのまま画面に出す */
+      const f = failed[0];
       el.progressText.textContent =
-        `${succeeded} 枚成功 / ${failed.length} 枚失敗\n理由: ${reason}`;
-      toast(`${failed.length} 件失敗: ${reason}`, true);
+        `${succeeded} 件成功 / ${failed.length} 件失敗\n` +
+        `${f.name}\n${f.detected} として処理 → ${f.reason}`;
+      toast(`${failed.length} 件失敗: ${f.reason}`, true);
       console.warn('アップロードに失敗したファイル:', failed);
     } else {
       el.progressText.textContent = `完了：${succeeded} 件を追加しました`;
