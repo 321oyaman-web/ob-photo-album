@@ -24,9 +24,10 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: '指定された写真が見つかりません' });
     }
 
-    /* 実体を先に消し、その後で一覧から外す（順序が逆だと孤立ファイルが残る） */
+    /* 実体を先に消し、その後で一覧から外す（順序が逆だと孤立ファイルが残る）。
+       PDF はサムネイルを持たないので本体のみ */
     await deleteObject(photo.key);
-    await deleteObject(photo.thumbKey);
+    if (photo.thumbKey) await deleteObject(photo.thumbKey);
 
     manifest.photos = manifest.photos.filter((p) => p.id !== id);
     await writeManifest(manifest);

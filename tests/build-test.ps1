@@ -21,7 +21,7 @@ if (-not (Test-Path $template)) {
 
 # api/ の全モジュールを1つの JS に固める（ブラウザから読み込むため）
 $files = @(
-    '_r2.js', '_auth.js', '_scenes.js',
+    '_r2.js', '_auth.js', '_scenes.js', '_items.js',
     'login.js', 'photos.js', 'upload-url.js', 'register.js',
     'update.js', 'delete.js', 'health.js', 'videos.js'
 )

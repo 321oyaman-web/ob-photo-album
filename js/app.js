@@ -92,6 +92,7 @@
     lightbox: $('lightbox'),
     lbImg: $('lb-img'),
     lbMeta: $('lb-meta'),
+    lbTags: $('lb-tags'),
     lbClose: $('lb-close'),
     lbPrev: $('lb-prev'),
     lbNext: $('lb-next'),
@@ -211,10 +212,16 @@
   }
 
   function updateHeaderCount() {
-    const total = state.photos.length;
-    const roleLabel = state.role === 'admin' ? '管理モード' : '閲覧モード';
-    const videoPart = state.videos.length > 0 ? ` ・ 動画 ${state.videos.length} 本` : '';
-    el.headerCount.textContent = `全 ${total} 枚${videoPart} ・ ${roleLabel}`;
+    const docs = state.photos.filter((p) => p.type === 'pdf').length;
+    const photos = state.photos.length - docs;
+
+    /* 0件の種別は省き、表示が長くなりすぎないようにする */
+    const parts = [`写真 ${photos} 枚`];
+    if (docs > 0) parts.push(`資料 ${docs} 件`);
+    if (state.videos.length > 0) parts.push(`動画 ${state.videos.length} 本`);
+    parts.push(state.role === 'admin' ? '管理モード' : '閲覧モード');
+
+    el.headerCount.textContent = parts.join(' ・ ');
   }
 
   /* ----------------------------------------
@@ -453,7 +460,7 @@
     if (state.visible.length === 0) {
       el.emptyState.hidden = false;
       el.emptyText.textContent = state.photos.length === 0
-        ? 'まだ写真が登録されていません。「写真を追加」から最初の1枚をアップロードしてみてください。'
+        ? 'まだ何も登録されていません。「写真を追加」から最初の1枚をアップロードしてみてください。'
         : '条件を変えてもう一度お試しください。';
       return;
     }
@@ -463,35 +470,94 @@
     const fragment = document.createDocumentFragment();
 
     state.visible.forEach((photo, index) => {
+      const isPdf = photo.type === 'pdf';
+
       const card = document.createElement('button');
-      card.className = 'card';
+      card.className = isPdf ? 'card card--doc' : 'card';
       card.type = 'button';
-      card.setAttribute('aria-label', buildLabel(photo) || '写真を拡大表示');
+      card.setAttribute('aria-label',
+        isPdf ? `資料を開く: ${photo.filename}` : (buildLabel(photo) || '写真を拡大表示'));
 
-      const img = document.createElement('img');
-      img.className = 'card__img';
-      img.src = photo.thumbUrl;
-      img.alt = buildLabel(photo) || '思い出の写真';
-      img.loading = 'lazy';
-      img.decoding = 'async';
-      card.appendChild(img);
+      if (isPdf) {
+        /* PDF はサムネイルを作れないため、書類アイコンとファイル名で示す */
+        const icon = document.createElement('span');
+        icon.className = 'card__doc-icon';
+        icon.setAttribute('aria-hidden', 'true');
+        icon.innerHTML = '<svg viewBox="0 0 24 24" width="34" height="34">' +
+          '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Zm0 0v5h5" ' +
+          'fill="none" stroke="currentColor" stroke-width="1.6" ' +
+          'stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        card.appendChild(icon);
 
-      const label = buildLabel(photo);
-      if (label) {
-        const overlay = document.createElement('div');
-        overlay.className = 'card__overlay';
-        const text = document.createElement('p');
-        text.className = 'card__label';
-        text.textContent = label;
-        overlay.appendChild(text);
-        card.appendChild(overlay);
+        const name = document.createElement('span');
+        name.className = 'card__doc-name';
+        name.textContent = photo.caption || photo.filename;
+        card.appendChild(name);
+
+        const docTags = formatTags(photo);
+        if (docTags) {
+          const tagEl = document.createElement('span');
+          tagEl.className = 'card__doc-tags';
+          tagEl.textContent = docTags;
+          card.appendChild(tagEl);
+        }
+      } else {
+        const img = document.createElement('img');
+        img.className = 'card__img';
+        img.src = photo.thumbUrl;
+        img.alt = buildLabel(photo) || '思い出の写真';
+        img.loading = 'lazy';
+        img.decoding = 'async';
+        card.appendChild(img);
+
+        const label = buildLabel(photo);
+        const tagText = formatTags(photo);
+        if (label || tagText) {
+          const overlay = document.createElement('div');
+          overlay.className = 'card__overlay';
+
+          if (label) {
+            const text = document.createElement('p');
+            text.className = 'card__label';
+            text.textContent = label;
+            overlay.appendChild(text);
+          }
+          if (tagText) {
+            const tagEl = document.createElement('p');
+            tagEl.className = 'card__tags';
+            tagEl.textContent = tagText;
+            overlay.appendChild(tagEl);
+          }
+          card.appendChild(overlay);
+        }
       }
 
-      card.addEventListener('click', () => openLightbox(index));
+      /* PDF は拡大表示ではなく、ブラウザのPDFビューアーで開く */
+      card.addEventListener('click', () => (isPdf ? openDocument(photo) : openLightbox(index)));
       fragment.appendChild(card);
     });
 
     el.gallery.appendChild(fragment);
+  }
+
+  /* PDF を別タブで開く。署名付きURLはその都度発行する */
+  async function openDocument(photo) {
+    /* ポップアップブロックを避けるため、先にタブを開いてからURLを入れる */
+    const tab = window.open('', '_blank', 'noopener');
+    try {
+      const data = await api(`/api/photos?id=${encodeURIComponent(photo.id)}`);
+      if (tab) tab.location.href = data.url;
+      else window.location.href = data.url;
+    } catch (err) {
+      if (tab) tab.close();
+      toast(err.message, true);
+    }
+  }
+
+  /* タグを「#合宿 #海」の形にする。タグが無ければ空文字 */
+  function formatTags(photo) {
+    const tags = photo.tags || [];
+    return tags.length ? tags.map((t) => `#${t}`).join(' ') : '';
   }
 
   /* カードやライトボックスに出す説明文を組み立てる */
@@ -530,6 +596,10 @@
       time && `${time} 撮影`,
       `${index + 1} / ${state.visible.length}`,
     ].filter(Boolean).join(' ・ ');
+
+    const tagText = formatTags(photo);
+    el.lbTags.textContent = tagText;
+    el.lbTags.hidden = !tagText;
 
     el.lbDelete.hidden = state.role !== 'admin';
     el.lbEdit.hidden = state.role !== 'admin';
@@ -714,13 +784,18 @@
     }
   }
 
-  /* 署名付き URL へ直接 PUT する */
-  async function putToR2(url, blob) {
+  const isPdfFile = (file) =>
+    file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+
+  /* 署名付き URL へ直接 PUT する。
+     ここで指定した種別が R2 に記録され、閲覧時のブラウザの挙動を決める
+     （image/jpeg なら画像として、application/pdf ならPDFビューアーで開く） */
+  async function putToR2(url, blob, contentType = 'image/jpeg') {
     let res;
     try {
       res = await fetch(url, {
         method: 'PUT',
-        headers: { 'Content-Type': 'image/jpeg' },
+        headers: { 'Content-Type': contentType },
         body: blob,
       });
     } catch {
@@ -751,31 +826,39 @@
 
     /* マニフェスト更新の競合を避けるため、1枚ずつ順番に処理する */
     for (const file of files) {
-      el.progressText.textContent = `${done + 1} / ${files.length} 枚目を処理中… （${file.name}）`;
+      el.progressText.textContent = `${done + 1} / ${files.length} 件目を処理中… （${file.name}）`;
 
       try {
-        const { full, thumb } = await makeVariants(file);
+        const type = isPdfFile(file) ? 'pdf' : 'photo';
 
         const slot = await api('/api/upload-url', {
           method: 'POST',
-          body: JSON.stringify({ filename: file.name }),
+          body: JSON.stringify({ filename: file.name, type }),
         });
 
-        await Promise.all([
-          putToR2(slot.uploadUrl, full.blob),
-          putToR2(slot.thumbUploadUrl, thumb.blob),
-        ]);
+        let detail;
+        if (type === 'pdf') {
+          /* PDF は縮小もサムネイル作成もできないため、そのまま送る */
+          await putToR2(slot.uploadUrl, file, 'application/pdf');
+          detail = { width: null, height: null, size: file.size };
+        } else {
+          const { full, thumb } = await makeVariants(file);
+          await Promise.all([
+            putToR2(slot.uploadUrl, full.blob),
+            putToR2(slot.thumbUploadUrl, thumb.blob),
+          ]);
+          detail = { width: full.width, height: full.height, size: full.blob.size };
+        }
 
         await api('/api/register', {
           method: 'POST',
           body: JSON.stringify({
             id: slot.id,
+            type,
             key: slot.key,
             thumbKey: slot.thumbKey,
             filename: file.name,
-            width: full.width,
-            height: full.height,
-            size: full.blob.size,
+            ...detail,
             takenAt: file.lastModified ? new Date(file.lastModified).toISOString() : '',
             ...meta,
           }),
@@ -796,11 +879,11 @@
       const reason = failed[0].reason;
       el.progressText.textContent =
         `${succeeded} 枚成功 / ${failed.length} 枚失敗\n理由: ${reason}`;
-      toast(`${failed.length} 枚失敗: ${reason}`, true);
+      toast(`${failed.length} 件失敗: ${reason}`, true);
       console.warn('アップロードに失敗したファイル:', failed);
     } else {
-      el.progressText.textContent = `完了：${succeeded} 枚を追加しました`;
-      toast(`${succeeded} 枚をアルバムに追加しました`);
+      el.progressText.textContent = `完了：${succeeded} 件を追加しました`;
+      toast(`${succeeded} 件をアルバムに追加しました`);
     }
 
     await loadPhotos();

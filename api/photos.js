@@ -40,7 +40,8 @@ export default async function handler(req, res) {
         return res.status(404).json({ error: '指定された写真が見つかりません' });
       }
 
-      /* download=1 のときはブラウザに保存ダイアログを出させる */
+      /* download=1 のときはブラウザに保存ダイアログを出させる。
+         指定が無ければ、PDF はブラウザ内でそのまま開く */
       const extraQuery = download
         ? {
             'response-content-disposition': buildContentDisposition(
@@ -63,6 +64,8 @@ export default async function handler(req, res) {
 
     const items = sorted.map((p) => ({
       id: p.id,
+      /* 種別の導入前に登録されたものはすべて写真 */
+      type: p.type || 'photo',
       filename: p.filename,
       /* シーン導入前に登録された写真は値を持たないため「その他」に寄せる */
       scene: p.scene || 'その他',
@@ -74,7 +77,8 @@ export default async function handler(req, res) {
       width: p.width,
       height: p.height,
       size: p.size,
-      thumbUrl: presignUrl('GET', p.thumbKey, URL_TTL_SECONDS),
+      /* PDF はサムネイルを持たないため、画面側で書類アイコンを出す */
+      thumbUrl: p.thumbKey ? presignUrl('GET', p.thumbKey, URL_TTL_SECONDS) : null,
     }));
 
     return res.status(200).json({ photos: items, total: items.length });

@@ -136,10 +136,10 @@
 
       <div class="modal__body">
         <label class="drop" id="drop-zone">
-          <input type="file" id="file-input" accept="image/*" multiple hidden>
+          <input type="file" id="file-input" accept="image/*,application/pdf,.pdf" multiple hidden>
           <span class="drop__icon" aria-hidden="true">＋</span>
-          <span class="drop__title">写真を選ぶ / ここにドラッグ＆ドロップ</span>
-          <span class="drop__note">複数まとめて選べます（JPEG・PNG・HEIC など）</span>
+          <span class="drop__title">写真・資料を選ぶ / ここにドラッグ＆ドロップ</span>
+          <span class="drop__note">複数まとめて選べます（JPEG・PNG などの写真、PDFの資料）</span>
         </label>
 
         <p class="picked" id="picked-info" hidden></p>
@@ -290,6 +290,7 @@
       <img class="lightbox__img" id="lb-img" alt="">
       <figcaption class="lightbox__caption">
         <p class="lightbox__meta" id="lb-meta"></p>
+        <p class="lightbox__tags" id="lb-tags" hidden></p>
         <div class="lightbox__tools">
           <button class="btn btn--light" id="lb-download">ダウンロード</button>
           <button class="btn btn--light" id="lb-edit" hidden>情報を修正</button>

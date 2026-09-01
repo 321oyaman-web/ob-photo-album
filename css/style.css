@@ -574,6 +574,34 @@ input { font: inherit; }
 
 .card:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); }
 
+/* PDF はサムネイルを作れないため、書類アイコンとファイル名で示す */
+.card--doc {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 14px 10px;
+  color: var(--ink-soft);
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.card--doc:hover { border-color: var(--accent); color: var(--accent-strong); }
+
+.card__doc-icon { color: var(--accent); flex-shrink: 0; }
+
+.card__doc-name {
+  font-size: 11.5px;
+  line-height: 1.5;
+  text-align: center;
+  word-break: break-word;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
 .card__img {
   width: 100%;
   height: 100%;
@@ -607,6 +635,27 @@ input { font: inherit; }
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+}
+
+/* タグは説明の下に、控えめな色で1行だけ添える */
+.card__tags {
+  margin: 3px 0 0;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, .78);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card__doc-tags {
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--ink-mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 /* タッチ端末はホバーが無いため常時表示にする */
@@ -940,16 +989,26 @@ select.field__input {
 .lightbox__caption { text-align: center; }
 
 .lightbox__meta {
-  margin: 0 0 12px;
+  margin: 0 0 6px;
   font-size: 13px;
   line-height: 1.7;
   color: rgba(255, 255, 255, .85);
+}
+
+.lightbox__tags {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--accent);
+  word-break: break-word;
 }
 
 .lightbox__tools {
   display: flex;
   gap: 10px;
   justify-content: center;
+  /* タグ行の有無にかかわらず、ボタンとの間隔を一定に保つ */
+  margin-top: 12px;
 }
 
 .lightbox__close,

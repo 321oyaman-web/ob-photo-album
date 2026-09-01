@@ -137,12 +137,14 @@ async function loadModules() {
   const r2Url = blob(src['_r2.js'].replace(/'node:crypto'/g, `'${cryptoUrl}'`));
   const authUrl = blob(src['_auth.js'].replace(/'node:crypto'/g, `'${cryptoUrl}'`));
   const scenesUrl = blob(src['_scenes.js']);
+  const itemsUrl = blob(src['_items.js']);
 
   const fix = (code) => code
     .replace(/'node:crypto'/g, `'${cryptoUrl}'`)
     .replace(/'\.\/_r2\.js'/g, `'${r2Url}'`)
     .replace(/'\.\/_auth\.js'/g, `'${authUrl}'`)
-    .replace(/'\.\/_scenes\.js'/g, `'${scenesUrl}'`);
+    .replace(/'\.\/_scenes\.js'/g, `'${scenesUrl}'`)
+    .replace(/'\.\/_items\.js'/g, `'${itemsUrl}'`);
 
   const mods = {};
   for (const name of ['login.js', 'photos.js', 'upload-url.js', 'register.js', 'update.js',
@@ -154,6 +156,7 @@ async function loadModules() {
   mods._r2 = await import(r2Url);
   mods._auth = await import(authUrl);
   mods._scenes = await import(scenesUrl);
+  mods._items = await import(itemsUrl);
   return mods;
 }
 
@@ -368,6 +371,59 @@ async function loadModules() {
   r = await call(m['photos.js'], mockReq({ headers: auth(viewerToken) }));
   check('修正内容が一覧に反映される',
     r.body.photos.find((p) => p.id === slot.id).scene, '集合写真');
+
+  /* ---------- PDF（資料） ---------- */
+  log('\n<h2>■ PDF の登録（写真と同じ一覧で扱う）</h2>');
+
+  r = await call(m['upload-url.js'], mockReq({ method: 'POST', headers: auth(adminToken),
+    body: { filename: '会報 2026.pdf', type: 'pdf' } }));
+  const pdfSlot = r.body;
+  check('PDF の保存先は file.pdf', pdfSlot.key, `photos/${pdfSlot.id}/file.pdf`);
+  check('PDF はサムネイルの発行先を持たない',
+    [pdfSlot.thumbKey, pdfSlot.thumbUploadUrl], [null, null]);
+  check('種別が返る', pdfSlot.type, 'pdf');
+
+  r = await call(m['upload-url.js'], mockReq({ method: 'POST', headers: auth(adminToken),
+    body: { filename: 'a.jpg' } }));
+  check('種別の指定が無ければ写真として扱う',
+    [r.body.type, r.body.thumbKey !== null], ['photo', true]);
+
+  store.set(pdfSlot.key, 'PDFDATA');
+
+  r = await call(m['register.js'], mockReq({ method: 'POST', headers: auth(adminToken),
+    body: { id: pdfSlot.id, type: 'pdf', key: pdfSlot.key, filename: '会報 2026.pdf',
+            scene: 'その他', caption: '当日配布の会報', size: 1234567,
+            takenAt: '2026-08-29T23:00:00.000Z' } }));
+  check('PDF の登録は 200', r.statusCode, 200);
+  check('種別が保存される', r.body.photo.type, 'pdf');
+  check('サムネイルは null', r.body.photo.thumbKey, null);
+  const pdfId = pdfSlot.id;
+
+  r = await call(m['register.js'], mockReq({ method: 'POST', headers: auth(adminToken),
+    body: { id: 'pdf2', type: 'pdf', key: 'photos/pdf2/full.jpg' } }));
+  check('PDF なのに写真の保存先を指定したら 400', r.statusCode, 400);
+
+  r = await call(m['register.js'], mockReq({ method: 'POST', headers: auth(adminToken),
+    body: { id: 'pdf3', type: 'pdf', key: 'photos/pdf3/file.pdf', thumbKey: 'photos/pdf3/thumb.jpg' } }));
+  check('PDF にサムネイルを付けようとしたら 400', r.statusCode, 400);
+
+  r = await call(m['photos.js'], mockReq({ headers: auth(viewerToken) }));
+  const pdfItem = r.body.photos.find((p) => p.id === pdfId);
+  check('一覧に PDF が含まれる', pdfItem.type, 'pdf');
+  check('PDF のサムネイルURLは null', pdfItem.thumbUrl, null);
+  check('写真のサムネイルURLは発行される',
+    /X-Amz-Signature=/.test(r.body.photos.find((p) => p.type === 'photo').thumbUrl), true);
+
+  r = await call(m['photos.js'], mockReq({ headers: auth(viewerToken), query: { id: pdfId } }));
+  check('PDF も署名付きURLで取得できる', /file\.pdf\?/.test(r.body.url), true);
+  check('指定が無ければ添付指定を付けない（ブラウザで開ける）',
+    /response-content-disposition/.test(r.body.url), false);
+
+  r2Calls.length = 0;
+  r = await call(m['delete.js'], mockReq({ method: 'POST', headers: auth(adminToken), body: { id: pdfId } }));
+  check('PDF の削除は 200', r.statusCode, 200);
+  check('PDF は本体のみ削除（サムネイルは呼ばない）',
+    r2Calls.filter((c) => c.startsWith('DELETE')).length, 1);
 
   /* ---------- 動画リンク ---------- */
   log('\n<h2>■ /api/videos（YouTube 限定公開へのリンク）</h2>');

@@ -6,6 +6,7 @@
 import { requireRole, readJsonBody } from './_auth.js';
 import { readManifest, writeManifest } from './_r2.js';
 import { normalizeScene, trimText, parseTags } from './_scenes.js';
+import { normalizeType, keysMatch } from './_items.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -15,27 +16,30 @@ export default async function handler(req, res) {
 
   try {
     const body = readJsonBody(req);
-    const { id, key, thumbKey } = body;
+    const { id, key } = body;
+    const type = normalizeType(body.type);
+    const thumbKey = body.thumbKey || null;
 
-    if (!id || !key || !thumbKey) {
-      return res.status(400).json({ error: '写真の情報が不足しています' });
+    if (!id || !key) {
+      return res.status(400).json({ error: 'ファイルの情報が不足しています' });
     }
     /* 発行済みのキー形式と一致するか確認し、任意のパスへの書き込みを防ぐ */
-    if (key !== `photos/${id}/full.jpg` || thumbKey !== `photos/${id}/thumb.jpg`) {
-      return res.status(400).json({ error: '写真の保存先が不正です' });
+    if (!keysMatch(type, id, key, thumbKey)) {
+      return res.status(400).json({ error: 'ファイルの保存先が不正です' });
     }
 
     const manifest = await readManifest();
     if (manifest.photos.some((p) => p.id === id)) {
-      return res.status(409).json({ error: 'この写真は既に登録されています' });
+      return res.status(409).json({ error: 'このファイルは既に登録されています' });
     }
 
     const photo = {
       id,
+      type,
       key,
       thumbKey,
       scene: normalizeScene(body.scene),
-      filename: trimText(body.filename, 120) || `${id}.jpg`,
+      filename: trimText(body.filename, 120) || (type === 'pdf' ? `${id}.pdf` : `${id}.jpg`),
       caption: trimText(body.caption, 300),
       tags: parseTags(body.tags),
       /* 撮影時刻。1日のイベントなので、これが並び順の基準になる */

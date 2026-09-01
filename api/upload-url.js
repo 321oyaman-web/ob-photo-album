@@ -7,6 +7,7 @@
 import crypto from 'node:crypto';
 import { requireRole, readJsonBody } from './_auth.js';
 import { presignUrl } from './_r2.js';
+import { normalizeType, keysFor } from './_items.js';
 
 const UPLOAD_TTL_SECONDS = 15 * 60; // アップロード用 URL の有効期間: 15分
 
@@ -17,22 +18,23 @@ export default function handler(req, res) {
   if (!requireRole(req, res, true)) return;
 
   try {
-    const { filename } = readJsonBody(req);
-    if (!filename) {
+    const body = readJsonBody(req);
+    if (!body.filename) {
       return res.status(400).json({ error: 'ファイル名が指定されていません' });
     }
 
-    /* 元のファイル名は表示用にのみ使い、保存先キーには UUID を使って衝突と文字化けを防ぐ */
+    const type = normalizeType(body.type);
     const id = crypto.randomUUID();
-    const key = `photos/${id}/full.jpg`;
-    const thumbKey = `photos/${id}/thumb.jpg`;
+    const { key, thumbKey } = keysFor(type, id);
 
     return res.status(200).json({
       id,
+      type,
       key,
       thumbKey,
       uploadUrl: presignUrl('PUT', key, UPLOAD_TTL_SECONDS),
-      thumbUploadUrl: presignUrl('PUT', thumbKey, UPLOAD_TTL_SECONDS),
+      /* PDF はサムネイルを作らないため、送信先も発行しない */
+      thumbUploadUrl: thumbKey ? presignUrl('PUT', thumbKey, UPLOAD_TTL_SECONDS) : null,
     });
   } catch (err) {
     console.error('[upload-url]', err);
