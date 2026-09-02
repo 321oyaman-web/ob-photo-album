@@ -318,7 +318,7 @@
     /* --- 時間帯（1日のイベントなので、序盤・終盤の指定が効く） --- */
     if (has(text, ['最初', '序盤', '前半', 'はじめの方', '始めの方'])) {
       const result = window.Album.setFilter({});
-      botSay('会の序盤の写真です（撮影時刻の早い順に並んでいます）。',
+      botSay('一覧の先頭から6枚です。',
         result.slice(0, THUMB_LIMIT), defaultQuickReplies());
       return;
     }

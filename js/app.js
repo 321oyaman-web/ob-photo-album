@@ -631,14 +631,6 @@
     return parts.join(' ・ ');
   }
 
-  /* 撮影時刻を「14:32」の形にする（1日のイベントなので時刻だけで十分） */
-  function formatTime(iso) {
-    if (!iso) return '';
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return '';
-    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  }
-
   /* ----------------------------------------
      ライトボックス（拡大表示）
   ---------------------------------------- */
@@ -653,10 +645,9 @@
     el.lbImg.src = '';
     el.lbImg.alt = buildLabel(photo) || '思い出の写真';
 
-    const time = formatTime(photo.takenAt);
+    /* 撮影時刻は、コピーや編集で書き換わっていることが多く当てにならないため表示しない */
     el.lbMeta.textContent = [
       buildLabel(photo) || photo.filename,
-      time && `${time} 撮影`,
       `${index + 1} / ${state.visible.length}`,
     ].filter(Boolean).join(' ・ ');
 
@@ -1013,7 +1004,7 @@
     if (state.role !== 'admin' || !photo) return;
 
     state.editingId = photo.id;
-    el.editTarget.textContent = `${photo.filename}${formatTime(photo.takenAt) ? `（${formatTime(photo.takenAt)} 撮影）` : ''}`;
+    el.editTarget.textContent = photo.filename;
     el.editScene.value = SCENES.includes(photo.scene) ? photo.scene : 'その他';
     el.editTags.value = (photo.tags || []).join(', ');
     el.editCaption.value = photo.caption || '';
