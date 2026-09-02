@@ -959,6 +959,56 @@ select.field__input {
 }
 
 /* ----------------------------------------
+   資料（PDF）の表示
+   別タブに飛ばさず、アルバム内で開いて「閉じる」で戻れるようにする
+---------------------------------------- */
+.docview {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.docview__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.docview__name {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.docview__tools {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.docview__tools .btn { text-decoration: none; }
+
+.docview__frame {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: var(--surface-2);
+}
+
+/* ----------------------------------------
    ライトボックス
 ---------------------------------------- */
 .lightbox {

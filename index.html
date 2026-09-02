@@ -183,6 +183,23 @@
   </div>
 
   <!-- ============================================
+       資料（PDF）の表示
+  ============================================ -->
+  <div class="docview" id="doc-modal" hidden>
+    <div class="docview__head">
+      <p class="docview__name" id="doc-name"></p>
+      <div class="docview__tools">
+        <a class="btn btn--light" id="doc-open" target="_blank" rel="noopener noreferrer">別のタブで開く</a>
+        <button class="btn btn--light" id="doc-download">ダウンロード</button>
+        <button class="btn btn--light" id="doc-edit" hidden>情報を修正</button>
+        <button class="btn btn--danger" id="doc-delete" hidden>削除</button>
+        <button class="btn btn--ghost" id="doc-close">閉じる</button>
+      </div>
+    </div>
+    <iframe class="docview__frame" id="doc-frame" title="資料の表示"></iframe>
+  </div>
+
+  <!-- ============================================
        写真の取り扱いについて（フッターから開く）
   ============================================ -->
   <div class="modal" id="policy-modal" hidden>

@@ -31,6 +31,7 @@
     visible: [],                                 // 絞り込み後に表示している写真
     filter: { scene: null, query: '' },
     editingId: null,
+    docId: null,
     lightboxIndex: -1,
     pickedFiles: [],
   };
@@ -88,6 +89,14 @@
     editCaption: $('edit-caption'),
     editSaveBtn: $('edit-save-btn'),
     lbEdit: $('lb-edit'),
+    docModal: $('doc-modal'),
+    docName: $('doc-name'),
+    docFrame: $('doc-frame'),
+    docOpen: $('doc-open'),
+    docDownload: $('doc-download'),
+    docEdit: $('doc-edit'),
+    docDelete: $('doc-delete'),
+    docClose: $('doc-close'),
     metaTags: $('meta-tags'),
     metaCaption: $('meta-caption'),
     uploadStartBtn: $('upload-start-btn'),
@@ -545,19 +554,68 @@
     el.gallery.appendChild(fragment);
   }
 
-  /* PDF を別タブで開く。署名付きURLはその都度発行する */
+  /* PDF はアルバム内で開く。別タブに飛ばすとポップアップの扱いに左右され、
+     戻る手段も分かりにくくなるため、「閉じる」で一覧へ戻れる形にする */
   async function openDocument(photo) {
-    /* ポップアップブロックを避けるため、先にタブを開いてからURLを入れる */
-    const tab = window.open('', '_blank', 'noopener');
+    state.docId = photo.id;
+    el.docName.textContent = photo.caption
+      ? `${photo.caption}（${photo.filename}）`
+      : photo.filename;
+    el.docFrame.src = 'about:blank';
+    el.docModal.hidden = false;
+    document.body.style.overflow = 'hidden';
+
+    el.docEdit.hidden = state.role !== 'admin';
+    el.docDelete.hidden = state.role !== 'admin';
+
     try {
       const data = await api(`/api/photos?id=${encodeURIComponent(photo.id)}`);
-      if (tab) tab.location.href = data.url;
-      else window.location.href = data.url;
+      /* 表示中に別の資料へ切り替わっていたら、古い応答は捨てる */
+      if (state.docId !== photo.id) return;
+      el.docFrame.src = data.url;
+      /* 端末によっては枠内でPDFを表示できないため、逃げ道を用意する */
+      el.docOpen.href = data.url;
     } catch (err) {
-      if (tab) tab.close();
       toast(err.message, true);
+      closeDocument();
     }
   }
+
+  function closeDocument() {
+    el.docModal.hidden = true;
+    el.docFrame.src = 'about:blank';
+    el.docOpen.removeAttribute('href');
+    state.docId = null;
+    document.body.style.overflow = '';
+  }
+
+  el.docClose.addEventListener('click', closeDocument);
+
+  el.docDownload.addEventListener('click', () => {
+    if (state.docId) downloadPhoto(state.docId);
+  });
+
+  el.docEdit.addEventListener('click', () => {
+    const photo = state.photos.find((p) => p.id === state.docId);
+    if (!photo) return;
+    closeDocument();
+    openEdit(photo);
+  });
+
+  el.docDelete.addEventListener('click', async () => {
+    const photo = state.photos.find((p) => p.id === state.docId);
+    if (!photo) return;
+    if (!confirm(`この資料を削除します。元に戻せませんが、よろしいですか？\n\n${photo.filename}`)) return;
+
+    try {
+      await api('/api/delete', { method: 'POST', body: JSON.stringify({ id: photo.id }) });
+      closeDocument();
+      toast('資料を削除しました');
+      await loadPhotos();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
 
   /* タグを「#合宿 #海」の形にする。タグが無ければ空文字 */
   function formatTags(photo) {
@@ -640,6 +698,10 @@
   });
 
   document.addEventListener('keydown', (e) => {
+    if (!el.docModal.hidden) {
+      if (e.key === 'Escape') closeDocument();
+      return;
+    }
     if (el.lightbox.hidden) return;
     if (e.key === 'Escape') closeLightbox();
     if (e.key === 'ArrowLeft') stepLightbox(-1);
